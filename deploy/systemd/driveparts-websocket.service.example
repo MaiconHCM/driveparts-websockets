@@ -1,0 +1,16 @@
+[Unit]
+Description=DriveParts WebSocket
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/var/www/driveparts-webSocket
+EnvironmentFile=/var/www/driveparts-webSocket/.env
+ExecStart=/usr/bin/node /var/www/driveparts-webSocket/dist/index.js
+Restart=always
+RestartSec=5
+User=www-data
+Group=www-data
+
+[Install]
+WantedBy=multi-user.target
