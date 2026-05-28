@@ -1,33 +1,67 @@
 # DriveParts WebSocket
 
-Servico Node.js para comunicacao em tempo real do DriveParts.
+Serviço Node.js responsável pelo realtime do DriveParts.
 
-Ele entrega duas primeiras capacidades:
+Atualizado em 2026-05-28.
 
-- chat entre lojas, sempre identificado por `store_id`
-- notificacoes basicas para atualizacao ou erro em anuncios
+## Escopo atual
+
+O serviço hoje cobre:
+
+- atendimento entre lojas
+- notificações internas
+- presença online por `store_id`
+
+Toda persistência e payload externo seguem `snake_case`, e a referência de loja é sempre `store_id`.
+Notificações podem ser de loja inteira ou direcionadas por `user_id`.
 
 ## Stack
 
 - Node.js 20+
 - TypeScript
-- Express para endpoints internos
-- Socket.IO para conexoes WebSocket
-- MongoDB para persistencia de mensagens e notificacoes
-- Redis opcional para escalar mais de uma instancia Socket.IO
+- Express
+- Socket.IO
+- MongoDB
+- Redis opcional para múltiplas instâncias Socket.IO
 
-## Garantias
+## Rotas HTTP
 
-- Mensagens e notificacoes sao persistidas antes do envio por socket.
-- `client_message_id` evita duplicidade quando o cliente reenvia uma mensagem.
-- `idempotency_key` evita duplicidade quando o DriveParts reenvia uma notificacao.
-- Ao reconectar, o cliente recebe sincronizacao inicial de chat e notificacoes nao lidas.
-- Todas as chaves de payload externo sao validadas em `lower_snake_case`.
-- O servico nao aceita alias legados para a loja: use somente `store_id`.
+- `GET /health/live`
+- `GET /health/ready`
+- `POST /internal/notifications`
+- `POST /internal/chat-messages/publish`
 
-## Configuracao
+As rotas internas exigem `x-internal-token` e validam chaves em `snake_case`.
 
-Crie `.env` a partir de `.env.example`.
+## Eventos Socket.IO
+
+Recebidos:
+
+- `chat:send`
+- `chat:sync`
+- `chat:read`
+- `notification:sync`
+- `notification:read`
+- `presence:sync`
+
+Emitidos:
+
+- `connection:ready`
+- `chat:message`
+- `chat:read`
+- `notification:new`
+- `notification:read`
+- `presence:update`
+
+## Coleções MongoDB
+
+- `attendance_threads`
+- `attendance_messages`
+- `attendance_settings`
+- `websocket_notifications`
+- `store_presence`
+
+## Execução
 
 ```bash
 npm install
@@ -35,157 +69,76 @@ npm run build
 npm start
 ```
 
-Em desenvolvimento:
+Desenvolvimento:
 
 ```bash
 npm run dev
 ```
 
-## Autenticacao Socket.IO
+## Docker (deploy em VPS)
 
-O DriveParts deve gerar um JWT assinado com `WEBSOCKET_JWT_SECRET`.
+O build é multi-stage (`tsc` → `node dist/src/index.js`) e roda como usuário não-root.
+MongoDB e Redis são externos (não fazem parte do compose).
 
-Payload minimo:
+A imagem é publicada **pública** em `maiconhcm/websocket`. Por isso ela **não contém
+nenhum segredo**: o `compose.yaml` tem só o serviço `websocket` e **todas as variáveis
+vêm do `.env` externo** (`env_file`), inclusive `MONGODB_URL` e `REDIS_URL` apontando
+para Mongo/Redis externos. O `.env` fica apenas local (já no `.gitignore`/`.dockerignore`),
+nunca versionado nem embutido na imagem.
 
-```json
-{
-  "user_id": "user_123",
-  "store_id": "store_123",
-  "permissions": ["chat_send", "notification_read"],
-  "exp": 1767225600
-}
-```
-
-Cliente:
-
-```js
-import { io } from "socket.io-client";
-
-const socket = io("https://websocket.driveparts.com.br", {
-  path: "/socket.io",
-  auth: { token }
-});
-```
-
-## Eventos de Chat
-
-Enviar mensagem:
-
-```js
-socket.emit("chat:send", {
-  recipient_store_id: "store_456",
-  body: "Mensagem de teste",
-  client_message_id: crypto.randomUUID()
-}, (response) => {
-  console.log(response);
-});
-```
-
-Receber mensagem:
-
-```js
-socket.on("chat:message", (message) => {
-  console.log(message.message_id, message.body);
-});
-```
-
-Sincronizar:
-
-```js
-socket.emit("chat:sync", {
-  after_message_id: "message_id_opcional",
-  limit: 50
-}, (response) => {
-  console.log(response.data.messages);
-});
-```
-
-Marcar conversa como lida:
-
-```js
-socket.emit("chat:read", {
-  conversation_id: "conversation_123"
-});
-```
-
-## Notificacoes Internas
-
-Endpoint interno para o DriveParts publicar notificacoes:
-
-```http
-POST /internal/notifications
-x-internal-token: <DRIVEPARTS_INTERNAL_TOKEN>
-content-type: application/json
-```
-
-Exemplo de atualizacao:
-
-```json
-{
-  "idempotency_key": "listing_123_updated_2026_05_26_1300",
-  "store_id": "store_123",
-  "type": "listing_updated",
-  "severity": "info",
-  "source": "driveparts",
-  "entity": "listing",
-  "title": "Anuncio atualizado",
-  "message": "O anuncio foi atualizado com sucesso.",
-  "channel": "mercado_livre_brasil",
-  "listing_id": "listing_123",
-  "integration_id": "integration_123",
-  "inventory_item_id": "inventory_item_123",
-  "external_listing_id": "MLB123"
-}
-```
-
-Exemplo de erro:
-
-```json
-{
-  "idempotency_key": "listing_123_error_2026_05_26_1300",
-  "store_id": "store_123",
-  "type": "listing_error",
-  "severity": "error",
-  "source": "driveparts",
-  "entity": "listing",
-  "title": "Erro no anuncio",
-  "message": "Nao foi possivel atualizar o anuncio.",
-  "channel": "mercado_livre_brasil",
-  "listing_id": "listing_123",
-  "data": {
-    "error_code": "integration_failed"
-  }
-}
-```
-
-Cliente recebe:
-
-```js
-socket.on("notification:new", (notification) => {
-  console.log(notification.notification_id, notification.type);
-});
-```
-
-Marcar como lida:
-
-```js
-socket.emit("notification:read", {
-  notification_id: "notification_123"
-});
-```
-
-## Colecoes MongoDB
-
-- `chat_conversations`
-- `chat_messages`
-- `websocket_notifications`
-
-Os indices sao criados na inicializacao. Tambem podem ser criados manualmente:
+### Publicar no Docker Hub
 
 ```bash
-npm run create-indexes
+docker login -u maiconhcm
+IMAGE_TAG=0.1.0 docker compose build   # ou: docker build -t maiconhcm/websocket:0.1.0 .
+IMAGE_TAG=0.1.0 docker compose push
+# opcional: também publicar como latest
+docker tag maiconhcm/websocket:0.1.0 maiconhcm/websocket:latest
+docker push maiconhcm/websocket:latest
 ```
 
-## Escala Horizontal
+### Rodar no VPS (consumindo a imagem pública)
 
-Defina `REDIS_URL` para habilitar o adapter Redis do Socket.IO quando houver mais de uma instancia.
+```bash
+cp .env.example .env   # preencha os segredos; defina NODE_ENV=production e CORS_ORIGINS
+docker compose pull    # baixa maiconhcm/websocket (não precisa do código-fonte)
+docker compose up -d
+docker compose logs -f
+```
+
+O serviço sobe na porta `PORT` (padrão `3010`), exposta direto no host.
+O TLS / reverse proxy (nginx, Cloudflare) fica por fora do compose.
+
+### Stack self-contained (Mongo + Redis internos)
+
+`compose.internal.yaml` sobe MongoDB e Redis junto do websocket, sem dependências externas:
+
+```bash
+cp .env.example .env   # defina MONGO_ROOT_PASSWORD e os demais segredos
+docker compose -f compose.internal.yaml up -d
+```
+
+- O `MONGODB_URL` é montado pelo compose a partir de `MONGO_ROOT_USER`/`MONGO_ROOT_PASSWORD`
+  (não precisa definir `MONGODB_URL` no `.env` aqui).
+- Os dados do Mongo ficam no volume `mongo_data`. O Redis é só pub/sub (sem persistência).
+- `mongo`/`redis` não são expostos no host; o websocket espera ambos ficarem `healthy`.
+- **Produção com dados compartilhados**: este Mongo começa vazio e isolado. Se o app PHP
+  lê/grava as mesmas collections, aponte o websocket para o Mongo do PHP usando o
+  `compose.yaml` (Mongo externo) — não o `compose.internal.yaml`.
+
+Notas:
+
+- Escolha a tag publicada com `IMAGE_TAG` (default `latest`).
+- Dentro do container, `127.0.0.1` é o próprio container. Para alcançar Mongo/Redis
+  instalados no host do VPS, use `host.docker.internal` no `.env` (o compose já mapeia
+  `host.docker.internal` → `host-gateway`).
+- O `.env` precisa conter ao menos `MONGODB_URL`, `DRIVEPARTS_INTERNAL_TOKEN` e
+  `WEBSOCKET_JWT_SECRET`; sem eles o serviço falha na validação de schema ao subir.
+- O healthcheck do container bate em `GET /health/live`.
+- Para múltiplas instâncias, defina `REDIS_URL` apontando para um Redis acessível.
+
+## Documentação detalhada
+
+Para o fluxo completo do atendimento, regras de responsável, payloads, rooms e integração com o DriveParts PHP:
+
+- `docs/ATENDIMENTO_CHAT.md`

@@ -30,6 +30,7 @@ async function main(): Promise<void> {
     config,
     logger,
     db: mongo.db,
+    chat_repository,
     notification_repository,
     realtime_gateway: socket_runtime.realtime_gateway
   });

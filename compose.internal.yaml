@@ -1,0 +1,84 @@
+# Stack self-contained: MongoDB + Redis internos + websocket.
+# Útil para dev/staging isolado. Subir com:
+#   docker compose -f compose.internal.yaml up -d
+#
+# ATENÇÃO (produção): este Mongo começa VAZIO e é isolado. Se o app PHP do
+# DriveParts lê/grava as mesmas collections (attendance_*, websocket_notifications,
+# store_presence), o websocket precisa apontar para o MESMO Mongo do PHP — nesse
+# caso use o compose.yaml (Mongo externo), não este.
+
+services:
+  mongo:
+    image: mongo:8
+    container_name: driveparts-mongo
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: "${MONGO_ROOT_USER:-driveparts}"
+      MONGO_INITDB_ROOT_PASSWORD: "${MONGO_ROOT_PASSWORD:?defina MONGO_ROOT_PASSWORD no .env}"
+      MONGO_INITDB_DATABASE: "${MONGODB_DB:-driveparts}"
+    volumes:
+      - mongo_data:/data/db
+    # Exponha no host apenas se precisar acessar o Mongo de fora (evite em produção):
+    # ports:
+    #   - "27017:27017"
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: driveparts-redis
+    restart: unless-stopped
+    # Sem persistência: o Redis aqui é só pub/sub do adapter do Socket.IO.
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      start_period: 5s
+      retries: 5
+
+  websocket:
+    image: maiconhcm/websocket:${IMAGE_TAG:-latest}
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: driveparts-websocket
+    restart: unless-stopped
+    depends_on:
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "${PORT:-3010}:${PORT:-3010}"
+    # MONGODB_URL e REDIS_URL apontam para os serviços internos (rede do compose).
+    # Segredos via ${VAR:?...}: nunca versionados nem embutidos na imagem.
+    environment:
+      NODE_ENV: "${NODE_ENV:-production}"
+      PORT: "${PORT:-3010}"
+      LOG_LEVEL: "${LOG_LEVEL:-info}"
+      MONGODB_DB: "${MONGODB_DB:-driveparts}"
+      MONGODB_URL: "mongodb://${MONGO_ROOT_USER:-driveparts}:${MONGO_ROOT_PASSWORD:?defina MONGO_ROOT_PASSWORD no .env}@mongo:27017/${MONGODB_DB:-driveparts}?authSource=admin"
+      REDIS_URL: "redis://redis:6379"
+      CORS_ORIGINS: "${CORS_ORIGINS:-http://localhost:8000,http://127.0.0.1:8000}"
+      SOCKET_PATH: "${SOCKET_PATH:-/socket.io}"
+      MAX_CHAT_MESSAGE_LENGTH: "${MAX_CHAT_MESSAGE_LENGTH:-4000}"
+      DRIVEPARTS_INTERNAL_TOKEN: "${DRIVEPARTS_INTERNAL_TOKEN:?defina DRIVEPARTS_INTERNAL_TOKEN no .env}"
+      WEBSOCKET_JWT_SECRET: "${WEBSOCKET_JWT_SECRET:?defina WEBSOCKET_JWT_SECRET no .env}"
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "const p=process.env.PORT||3010;require('http').get('http://127.0.0.1:'+p+'/health/live',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+volumes:
+  mongo_data:

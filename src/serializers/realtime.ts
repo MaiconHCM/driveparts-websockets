@@ -13,6 +13,19 @@ export function serialize_chat_message(message: ChatMessageDocument) {
     sender_user_id: message.sender_user_id,
     ...(message.sender_user_name ? { sender_user_name: message.sender_user_name } : {}),
     ...(message.sender_user_role ? { sender_user_role: message.sender_user_role } : {}),
+    message_type: message.message_type ?? 'text',
+    ...(message.attendance_transfer ? {
+      attendance_transfer: {
+        transferred_by_user_id: message.attendance_transfer.transferred_by_user_id,
+        transferred_by_user_name: message.attendance_transfer.transferred_by_user_name,
+        transferred_by_user_role: message.attendance_transfer.transferred_by_user_role,
+        transferred_to_user_id: message.attendance_transfer.transferred_to_user_id,
+        transferred_to_user_name: message.attendance_transfer.transferred_to_user_name,
+        transferred_to_user_role: message.attendance_transfer.transferred_to_user_role,
+        transferred_to_store_id: message.attendance_transfer.transferred_to_store_id,
+        created_at: message.attendance_transfer.created_at.toISOString()
+      }
+    } : {}),
     body: message.body,
     status: message.status,
     created_at: message.created_at.toISOString(),
@@ -37,6 +50,7 @@ export function serialize_notification(notification: NotificationDocument) {
   return {
     notification_id: notification._id.toHexString(),
     store_id: notification.store_id,
+    ...(notification.user_id ? { user_id: notification.user_id } : {}),
     type: notification.type,
     severity: notification.severity,
     source: notification.source,

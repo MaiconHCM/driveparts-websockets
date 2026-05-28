@@ -109,10 +109,11 @@ export type PresenceSyncInput = z.infer<typeof presence_sync_schema>;
 export const internal_notification_schema = z.object({
   idempotency_key: optional_id_value,
   store_id: id_value,
-  type: z.enum(['listing_updated', 'listing_error']),
+  user_id: optional_id_value,
+  type: z.enum(['listing_updated', 'listing_error', 'attendance_transfer']),
   severity: z.enum(['info', 'warning', 'error']).default('info'),
   source: z.enum(['driveparts', 'mercado_livre_brasil', 'shopee', 'google_merchant', 'system']).default('driveparts'),
-  entity: z.enum(['listing', 'inventory_item', 'integration']).default('listing'),
+  entity: z.enum(['listing', 'inventory_item', 'integration', 'attendance_thread']).default('listing'),
   title: non_empty_text.max(160),
   message: non_empty_text.max(2000),
   channel: z.string().regex(lower_snake_case_value).optional(),
@@ -124,3 +125,9 @@ export const internal_notification_schema = z.object({
 }).strict();
 
 export type InternalNotificationInput = z.infer<typeof internal_notification_schema>;
+
+export const internal_chat_message_schema = z.object({
+  message_id: id_value
+}).strict();
+
+export type InternalChatMessageInput = z.infer<typeof internal_chat_message_schema>;

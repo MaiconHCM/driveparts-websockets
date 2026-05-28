@@ -6,9 +6,10 @@ import { ZodError } from 'zod';
 import type { Db } from 'mongodb';
 import type { AppConfig } from '../config/app_config.js';
 import type { AppLogger } from '../config/logger.js';
-import { internal_notification_schema } from '../contracts/schemas.js';
+import { internal_chat_message_schema, internal_notification_schema } from '../contracts/schemas.js';
+import type { ChatRepository } from '../repositories/chat_repository.js';
 import type { NotificationRepository } from '../repositories/notification_repository.js';
-import { serialize_notification } from '../serializers/realtime.js';
+import { serialize_chat_message, serialize_notification } from '../serializers/realtime.js';
 import type { RealtimeGateway } from '../socket/realtime_gateway.js';
 import { assert_payload_keys_are_snake_case } from '../utils/snake_case.js';
 import { require_internal_token } from './internal_auth.js';
@@ -17,6 +18,7 @@ type AppDependencies = {
   config: AppConfig;
   logger: AppLogger;
   db: Db;
+  chat_repository: ChatRepository;
   notification_repository: NotificationRepository;
   realtime_gateway: RealtimeGateway;
 };
@@ -67,6 +69,38 @@ export function create_http_app(deps: AppDependencies) {
         response.status(202).json({
           ok: true,
           notification: serialize_notification(notification)
+        });
+      } catch (error) {
+        next(error);
+      }
+    }
+  );
+
+  app.post(
+    '/internal/chat-messages/publish',
+    require_internal_token(deps.config),
+    async (request, response, next) => {
+      try {
+        assert_payload_keys_are_snake_case(request.body);
+        const input = internal_chat_message_schema.parse(request.body);
+        const message = await deps.chat_repository.find_message_by_id(input.message_id);
+
+        if (!message) {
+          response.status(404).json({
+            ok: false,
+            error: {
+              code: 'not_found',
+              message: 'message_not_found'
+            }
+          });
+          return;
+        }
+
+        deps.realtime_gateway.publish_chat_message(message);
+
+        response.status(202).json({
+          ok: true,
+          message: serialize_chat_message(message)
         });
       } catch (error) {
         next(error);

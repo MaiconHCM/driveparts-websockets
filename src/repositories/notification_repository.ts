@@ -4,10 +4,11 @@ import type { InternalNotificationInput } from '../contracts/schemas.js';
 export type NotificationDocument = {
   _id: ObjectId;
   store_id: string;
-  type: 'listing_updated' | 'listing_error';
+  user_id?: string;
+  type: 'listing_updated' | 'listing_error' | 'attendance_transfer';
   severity: 'info' | 'warning' | 'error';
   source: 'driveparts' | 'mercado_livre_brasil' | 'shopee' | 'google_merchant' | 'system';
-  entity: 'listing' | 'inventory_item' | 'integration';
+  entity: 'listing' | 'inventory_item' | 'integration' | 'attendance_thread';
   title: string;
   message: string;
   created_at: Date;
@@ -23,6 +24,7 @@ export type NotificationDocument = {
 
 type ListNotificationsInput = {
   store_id: string;
+  user_id: string;
   after_notification_id?: string;
   unread_only: boolean;
   limit: number;
@@ -50,6 +52,7 @@ export class NotificationRepository {
     const notification: NotificationDocument = {
       _id: new ObjectId(),
       store_id: input.store_id,
+      ...(input.user_id ? { user_id: input.user_id } : {}),
       type: input.type,
       severity: input.severity,
       source: input.source,
@@ -87,7 +90,8 @@ export class NotificationRepository {
 
   async list_notifications(input: ListNotificationsInput): Promise<NotificationDocument[]> {
     const query: Filter<NotificationDocument> = {
-      store_id: input.store_id
+      store_id: input.store_id,
+      $or: build_notification_visibility_conditions(input.user_id)
     };
 
     if (input.unread_only) {
@@ -113,7 +117,7 @@ export class NotificationRepository {
     return latest.reverse();
   }
 
-  async mark_read(store_id: string, notification_id: string): Promise<NotificationDocument | null> {
+  async mark_read(store_id: string, user_id: string, notification_id: string): Promise<NotificationDocument | null> {
     if (!ObjectId.isValid(notification_id)) {
       return null;
     }
@@ -121,12 +125,26 @@ export class NotificationRepository {
     return this.notifications.findOneAndUpdate(
       {
         _id: new ObjectId(notification_id),
-        store_id
+        store_id,
+        $or: build_notification_visibility_conditions(user_id)
       },
       { $set: { read_at: new Date() } },
       { returnDocument: 'after' }
     );
   }
+}
+
+function build_notification_visibility_conditions(user_id: string): Filter<NotificationDocument>[] {
+  const normalized_user_id = user_id.trim();
+  const conditions: Filter<NotificationDocument>[] = [
+    { user_id: { $exists: false } } as Filter<NotificationDocument>
+  ];
+
+  if (normalized_user_id !== '') {
+    conditions.push({ user_id: normalized_user_id });
+  }
+
+  return conditions;
 }
 
 function is_duplicate_key_error(error: unknown): boolean {

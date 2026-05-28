@@ -53,7 +53,9 @@ export async function ensure_indexes(db: Db): Promise<void> {
     ]),
     db.collection('websocket_notifications').createIndexes([
       { key: { store_id: 1, created_at: -1 }, name: 'store_id_1_created_at_-1' },
+      { key: { store_id: 1, user_id: 1, created_at: -1 }, name: 'store_id_1_user_id_1_created_at_-1' },
       { key: { store_id: 1, read_at: 1, created_at: -1 }, name: 'store_id_1_read_at_1_created_at_-1' },
+      { key: { store_id: 1, user_id: 1, read_at: 1, created_at: -1 }, name: 'store_id_1_user_id_1_read_at_1_created_at_-1' },
       {
         key: { store_id: 1, idempotency_key: 1 },
         unique: true,

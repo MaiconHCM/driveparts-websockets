@@ -172,6 +172,7 @@ export function register_socket_handlers(deps: HandlerDependencies): void {
         const input = notification_sync_schema.parse(payload ?? {});
         const notifications = await deps.notification_repository.list_notifications({
           store_id,
+          user_id,
           after_notification_id: input.after_notification_id,
           unread_only: input.unread_only,
           limit: input.limit
@@ -187,7 +188,7 @@ export function register_socket_handlers(deps: HandlerDependencies): void {
     authenticated_socket.on('notification:read', async (payload, ack?: AckCallback<unknown>) => {
       try {
         const input = notification_read_schema.parse(payload);
-        const notification = await deps.notification_repository.mark_read(store_id, input.notification_id);
+        const notification = await deps.notification_repository.mark_read(store_id, user_id, input.notification_id);
 
         if (!notification) {
           send_ack(ack, error_ack('not_found', 'notification_not_found'));
@@ -288,7 +289,7 @@ async function emit_initial_sync(socket: AuthenticatedSocket, deps: HandlerDepen
   );
   const [chat_sync_result, notifications] = await Promise.all([
     deps.chat_repository.list_messages({ store_id, user_id, user_role, limit: 30 }),
-    deps.notification_repository.list_notifications({ store_id, unread_only: true, limit: 50 })
+    deps.notification_repository.list_notifications({ store_id, user_id, unread_only: true, limit: 50 })
   ]);
 
   socket.emit('chat:sync', {

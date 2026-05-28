@@ -129,19 +129,24 @@ export class RealtimeGateway {
   }
 
   publish_notification(notification: NotificationDocument): void {
-    this.io
-      .to(store_room(notification.store_id))
-      .emit('notification:new', serialize_notification(notification));
+    const target_room = notification.user_id
+      ? user_room(notification.user_id)
+      : store_room(notification.store_id);
+
+    this.io.to(target_room).emit('notification:new', serialize_notification(notification));
   }
 
   publish_notification_read(notification: NotificationDocument): void {
-    this.io
-      .to(store_room(notification.store_id))
-      .emit('notification:read', {
-        notification_id: notification._id.toHexString(),
-        store_id: notification.store_id,
-        read_at: notification.read_at?.toISOString() ?? new Date().toISOString()
-      });
+    const target_room = notification.user_id
+      ? user_room(notification.user_id)
+      : store_room(notification.store_id);
+
+    this.io.to(target_room).emit('notification:read', {
+      notification_id: notification._id.toHexString(),
+      store_id: notification.store_id,
+      ...(notification.user_id ? { user_id: notification.user_id } : {}),
+      read_at: notification.read_at?.toISOString() ?? new Date().toISOString()
+    });
   }
 }
 

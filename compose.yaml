@@ -1,0 +1,25 @@
+services:
+  websocket:
+    image: maiconhcm/websocket:latest
+    container_name: driveparts-websocket
+    restart: unless-stopped
+    ports:
+      - 3010:3010
+    environment:
+      TZ: America/Sao_Paulo
+      NODE_ENV: production
+      PORT: "3010"
+      LOG_LEVEL: info
+      SOCKET_PATH: /socket.io
+      MAX_CHAT_MESSAGE_LENGTH: "4000"
+      CORS_ORIGINS: https://driveparts.com.br,https://www.driveparts.com.br
+      MONGODB_DB: driveparts
+      MONGODB_URL: mongodb://driveparts:${MONGODB_PASSWORD}@186.226.61.22
+      REDIS_URL: redis://172.17.0.1:6379
+      DRIVEPARTS_INTERNAL_TOKEN: ${DRIVEPARTS_INTERNAL_TOKEN}
+      WEBSOCKET_JWT_SECRET: ${WEBSOCKET_JWT_SECRET}
+    networks:
+      - internal_services
+networks:
+  internal_services:
+    external: true

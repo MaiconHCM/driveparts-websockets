@@ -68,6 +68,17 @@ export type ChatReferenceDocument = {
   thumbnail_url?: string;
 };
 
+export type ChatAttendanceTransferDocument = {
+  transferred_by_user_id: string;
+  transferred_by_user_name: string;
+  transferred_by_user_role: ChatUserRole;
+  transferred_to_user_id: string;
+  transferred_to_user_name: string;
+  transferred_to_user_role: ChatUserRole;
+  transferred_to_store_id: string;
+  created_at: Date;
+};
+
 export type ChatMessageDocument = {
   _id: ObjectId;
   attendance_thread_id: string;
@@ -79,6 +90,8 @@ export type ChatMessageDocument = {
   sender_user_id: string;
   sender_user_name?: string;
   sender_user_role?: ChatUserRole;
+  message_type?: 'text' | 'attendance_transfer';
+  attendance_transfer?: ChatAttendanceTransferDocument;
   body: string;
   status: 'sent';
   created_at: Date;
@@ -295,6 +308,22 @@ export class ChatRepository {
       messages: await this.attach_thread_metadata(latest_messages.slice(0, input.limit).reverse()),
       has_more: latest_messages.length > input.limit
     };
+  }
+
+  async find_message_by_id(message_id: string): Promise<ChatMessageDocument | null> {
+    if (!ObjectId.isValid(message_id)) {
+      return null;
+    }
+
+    const message = await this.messages.findOne({
+      _id: new ObjectId(message_id)
+    });
+
+    if (!message) {
+      return null;
+    }
+
+    return (await this.attach_thread_metadata([message]))[0] ?? message;
   }
 
   async mark_conversation_read(input: MarkConversationReadInput): Promise<MarkConversationReadResult> {
