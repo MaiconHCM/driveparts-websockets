@@ -25,7 +25,7 @@ type AttendanceThreadSideDocument = {
 
 export class ChatAttendanceResponsibilityError extends Error {
   constructor(
-    readonly code: 'attendance_attendant_role_required' | 'attendance_side_already_assigned',
+    readonly code: 'attendance_attendant_role_required' | 'attendance_side_already_assigned' | 'attendance_thread_closed',
     readonly attendance_responsible?: ChatAttendanceResponsibleDocument
   ) {
     super(code);
@@ -90,7 +90,7 @@ export type ChatMessageDocument = {
   sender_user_id: string;
   sender_user_name?: string;
   sender_user_role?: ChatUserRole;
-  message_type?: 'text' | 'attendance_transfer';
+  message_type?: 'text' | 'attendance_transfer' | 'attendance_closed';
   attendance_transfer?: ChatAttendanceTransferDocument;
   body: string;
   status: 'sent';
@@ -189,6 +189,10 @@ export class ChatRepository {
 
     if (!is_chat_attendant_role(sender_user_role)) {
       throw new ChatAttendanceResponsibilityError('attendance_attendant_role_required');
+    }
+
+    if (thread.status === 'closed') {
+      throw new ChatAttendanceResponsibilityError('attendance_thread_closed');
     }
 
     if (single_attendant_enabled) {
