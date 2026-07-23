@@ -37,7 +37,7 @@ describe('realtime contracts', () => {
         type: 'inventory_item',
         inventory_item_id: 'inventory_item_1',
         marketplace_name: 'Motor limpador',
-        display_code: '1312',
+        stock_keeping_unit: '1312',
         price: 189.9,
         thumbnail_url: '/uploads/pecaAvulsas/thumbnail/motor-limpador.webp'
       }
@@ -45,6 +45,7 @@ describe('realtime contracts', () => {
 
     expect(payload.body).toBe('');
     expect(payload.reference?.inventory_item_id).toBe('inventory_item_1');
+    expect(payload.reference?.stock_keeping_unit).toBe('1312');
   });
 
   it('rejects chat payload with camel case keys', () => {

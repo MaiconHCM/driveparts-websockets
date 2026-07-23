@@ -18,7 +18,7 @@ const chat_reference_schema = z.object({
   type: z.enum(['inventory_item']),
   inventory_item_id: id_value,
   marketplace_name: z.string().trim().min(1).max(255),
-  display_code: z.string().trim().max(120).default(''),
+  stock_keeping_unit: z.string().trim().max(120).default(''),
   price: z.number().min(0).max(100000000).nullable().optional(),
   thumbnail_url: z.string().trim().min(1).max(2000).optional()
 }).strict();

@@ -63,7 +63,7 @@ export type ChatReferenceDocument = {
   type: 'inventory_item';
   inventory_item_id: string;
   marketplace_name: string;
-  display_code?: string;
+  stock_keeping_unit?: string;
   price?: number | null;
   thumbnail_url?: string;
 };

@@ -157,7 +157,7 @@ Schema: `chat_send_schema`
     "type": "inventory_item",
     "inventory_item_id": "inventory_item_id",
     "marketplace_name": "Título da peça",
-    "display_code": "Código visível",
+    "stock_keeping_unit": "SKU da peça",
     "price": 123.45,
     "thumbnail_url": "/uploads/..."
   }
