@@ -53,6 +53,9 @@ describe('ecommerce realtime isolation', () => {
       store_name: 'Loja 1',
       visitor_id: 'visitor_1',
       visitor_name: 'Visitante',
+      customer_email: 'cliente@example.com',
+      customer_phone: '+5511999999999',
+      customer_contact_updated_at: new Date('2026-07-25T12:00:00.000Z'),
       status: 'open',
       inventory_item_reference: {
         inventory_item_id: 'inventory_item_1',
@@ -71,5 +74,62 @@ describe('ecommerce realtime isolation', () => {
     expect(payload).not.toHaveProperty('visitor_id');
     expect(payload).not.toHaveProperty('responsible_user_id');
     expect(payload).not.toHaveProperty('unread_store_count');
+    expect(payload).toMatchObject({
+      customer_email: 'cliente@example.com',
+      customer_phone: '+5511999999999',
+      customer_contact_updated_at: '2026-07-25T12:00:00.000Z'
+    });
+  });
+
+  it('publishes customer contact only to the conversation store and customer rooms', () => {
+    const emissions: Array<{ rooms: string[]; event_name: string; payload: unknown }> = [];
+    const io = {
+      to(rooms: string[]) {
+        return {
+          emit(event_name: string, payload: unknown) {
+            emissions.push({ rooms, event_name, payload });
+          }
+        };
+      }
+    } as unknown as Server;
+    const gateway = new RealtimeGateway(io);
+    const conversation_id = new ObjectId();
+
+    gateway.publish_ecommerce_contact({
+      _id: conversation_id,
+      conversation_key: 'e_commerce:store_1:visitor_1',
+      channel: 'e_commerce',
+      store_id: 'store_1',
+      store_name: 'Loja 1',
+      visitor_id: 'visitor_1',
+      visitor_name: 'Cliente',
+      customer_phone: '+5511999999999',
+      customer_contact_updated_at: new Date('2026-07-25T12:00:00.000Z'),
+      status: 'open',
+      inventory_item_reference: {
+        inventory_item_id: 'inventory_item_1',
+        inventory_item_name: 'Motor',
+        inventory_item_url: 'https://mercadodrive.com.br/peca/motor/inventory_item_1'
+      },
+      created_at: new Date(),
+      updated_at: new Date(),
+      unread_store_count: 1,
+      unread_customer_count: 0
+    });
+
+    expect(emissions).toEqual([{
+      rooms: [
+        'store_attendant:store_1:master',
+        'store_attendant:store_1:seller',
+        'ecommerce_customer:store_1:visitor_1'
+      ],
+      event_name: 'ecommerce_chat:contact',
+      payload: {
+        conversation_id: conversation_id.toHexString(),
+        store_id: 'store_1',
+        customer_phone: '+5511999999999',
+        customer_contact_updated_at: '2026-07-25T12:00:00.000Z'
+      }
+    }]);
   });
 });

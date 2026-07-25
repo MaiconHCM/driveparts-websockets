@@ -48,6 +48,7 @@ Recebidos:
 - `ecommerce_chat:send`
 - `ecommerce_chat:sync`
 - `ecommerce_chat:read`
+- `ecommerce_chat:contact`
 - `ecommerce_chat:conversations`
 - `notification:sync`
 - `notification:read`
@@ -60,6 +61,7 @@ Emitidos:
 - `chat:read`
 - `ecommerce_chat:message`
 - `ecommerce_chat:read`
+- `ecommerce_chat:contact`
 - `ecommerce_chat:presence`
 - `notification:new`
 - `notification:read`

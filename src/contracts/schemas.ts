@@ -47,6 +47,8 @@ export const socket_website_customer_jwt_payload_schema = z.object({
   actor_type: z.literal('website_customer'),
   visitor_id: id_value,
   visitor_name: z.string().trim().min(1).max(160).default('Visitante'),
+  customer_email: z.string().trim().email().max(254).optional(),
+  customer_phone: z.string().trim().regex(/^\+[1-9][0-9]{9,14}$/).optional(),
   store_id: id_value,
   store_name: z.string().trim().min(1).max(160),
   inventory_item_id: id_value,
@@ -118,6 +120,19 @@ export const ecommerce_chat_customer_send_schema = z.object({
 }).strict();
 
 export type EcommerceChatCustomerSendInput = z.infer<typeof ecommerce_chat_customer_send_schema>;
+
+export const ecommerce_chat_customer_contact_schema = z.discriminatedUnion('contact_type', [
+  z.object({
+    contact_type: z.literal('email'),
+    contact_value: z.string().trim().email().max(254).transform((value) => value.toLowerCase())
+  }).strict(),
+  z.object({
+    contact_type: z.literal('phone'),
+    contact_value: z.string().trim().regex(/^\+[1-9][0-9]{9,14}$/)
+  }).strict()
+]);
+
+export type EcommerceChatCustomerContactInput = z.infer<typeof ecommerce_chat_customer_contact_schema>;
 
 export const ecommerce_chat_store_send_schema = z.object({
   conversation_id: id_value,

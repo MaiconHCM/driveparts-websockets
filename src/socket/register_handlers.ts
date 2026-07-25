@@ -7,6 +7,7 @@ import {
   chat_send_schema,
   chat_sync_schema,
   ecommerce_chat_conversations_schema,
+  ecommerce_chat_customer_contact_schema,
   ecommerce_chat_customer_read_schema,
   ecommerce_chat_customer_send_schema,
   ecommerce_chat_customer_sync_schema,
@@ -366,6 +367,22 @@ async function register_ecommerce_customer_socket(
 
   await socket.join(customer_room);
   await socket.join(deps.realtime_gateway.join_ecommerce_presence_room(identity.store_id));
+  await deps.ecommerce_chat_repository.synchronize_customer_identity({
+    visitor_id: identity.visitor_id,
+    visitor_name: identity.visitor_name,
+    ...(identity.customer_email ? { customer_email: identity.customer_email } : {}),
+    ...(identity.customer_phone ? { customer_phone: identity.customer_phone } : {}),
+    store_id: identity.store_id,
+    store_name: identity.store_name,
+    inventory_item_reference: {
+      inventory_item_id: identity.inventory_item_id,
+      inventory_item_name: identity.inventory_item_name,
+      inventory_item_url: identity.inventory_item_url,
+      ...(identity.inventory_item_thumbnail_url ? {
+        inventory_item_thumbnail_url: identity.inventory_item_thumbnail_url
+      } : {})
+    }
+  });
 
   deps.logger.info({
     socket_id: socket.id,
@@ -422,6 +439,8 @@ async function register_ecommerce_customer_socket(
       const message = await deps.ecommerce_chat_repository.create_customer_message({
         visitor_id: identity.visitor_id,
         visitor_name: identity.visitor_name,
+        ...(identity.customer_email ? { customer_email: identity.customer_email } : {}),
+        ...(identity.customer_phone ? { customer_phone: identity.customer_phone } : {}),
         store_id: identity.store_id,
         store_name: identity.store_name,
         inventory_item_reference: {
@@ -444,6 +463,42 @@ async function register_ecommerce_customer_socket(
         store_id: identity.store_id,
         visitor_id: identity.visitor_id
       }, 'ecommerce_chat_customer_send_failed');
+      send_ack(ack, error_ack('invalid_payload', get_ecommerce_error_message(error)));
+    }
+  });
+
+  socket.on('ecommerce_chat:contact', async (payload, ack?: AckCallback<unknown>) => {
+    if (!identity.permissions.includes('ecommerce_chat_contact')) {
+      send_ack(ack, error_ack('forbidden', 'ecommerce_chat_contact_not_allowed'));
+      return;
+    }
+    if (!deps.realtime_gateway.consume_ecommerce_customer_message_quota(
+      identity.store_id,
+      identity.visitor_id
+    )) {
+      send_ack(ack, error_ack('rate_limited', 'ecommerce_chat_rate_limit_exceeded'));
+      return;
+    }
+
+    try {
+      const input = ecommerce_chat_customer_contact_schema.parse(payload);
+      const conversation = await deps.ecommerce_chat_repository.update_customer_contact({
+        store_id: identity.store_id,
+        visitor_id: identity.visitor_id,
+        contact_type: input.contact_type,
+        contact_value: input.contact_value
+      });
+
+      deps.realtime_gateway.publish_ecommerce_contact(conversation);
+      send_ack(ack, ok_ack({
+        conversation: serialize_ecommerce_customer_conversation(conversation)
+      }));
+    } catch (error) {
+      deps.logger.warn({
+        error,
+        store_id: identity.store_id,
+        visitor_id: identity.visitor_id
+      }, 'ecommerce_chat_customer_contact_failed');
       send_ack(ack, error_ack('invalid_payload', get_ecommerce_error_message(error)));
     }
   });

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   chat_send_schema,
   chat_sync_schema,
+  ecommerce_chat_customer_contact_schema,
   ecommerce_chat_customer_send_schema,
   ecommerce_chat_store_send_schema,
   internal_notification_schema,
@@ -99,11 +100,35 @@ describe('realtime contracts', () => {
       inventory_item_id: 'inventory_item_1',
       inventory_item_name: 'Motor',
       inventory_item_url: 'https://mercadodrive.com.br/peca/motor/inventory_item_1',
-      permissions: ['ecommerce_chat_send', 'ecommerce_chat_read']
+      customer_email: 'cliente@example.com',
+      customer_phone: '+5511999999999',
+      permissions: ['ecommerce_chat_send', 'ecommerce_chat_read', 'ecommerce_chat_contact']
     });
 
     expect(payload.actor_type).toBe('website_customer');
     expect(payload.store_id).toBe('store_1');
+  });
+
+  it('accepts only validated customer contact payloads', () => {
+    const email_contact = ecommerce_chat_customer_contact_schema.parse({
+      contact_type: 'email',
+      contact_value: ' Cliente@Example.com '
+    });
+    const phone_contact = ecommerce_chat_customer_contact_schema.parse({
+      contact_type: 'phone',
+      contact_value: '+5511999999999'
+    });
+
+    expect(email_contact.contact_value).toBe('cliente@example.com');
+    expect(phone_contact.contact_value).toBe('+5511999999999');
+    expect(() => ecommerce_chat_customer_contact_schema.parse({
+      contact_type: 'phone',
+      contact_value: '(11) 99999-9999'
+    })).toThrow();
+    expect(() => ecommerce_chat_customer_contact_schema.parse({
+      contactType: 'email',
+      contactValue: 'cliente@example.com'
+    })).toThrow();
   });
 
   it('requires actor type on store user tokens', () => {

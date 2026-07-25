@@ -17,6 +17,9 @@ export type EcommerceConversationDocument = {
   store_name: string;
   visitor_id: string;
   visitor_name: string;
+  customer_email?: string;
+  customer_phone?: string;
+  customer_contact_updated_at?: Date;
   status: 'waiting' | 'open' | 'closed';
   inventory_item_reference: EcommerceInventoryItemReference;
   responsible_user_id?: string;
@@ -54,6 +57,8 @@ export type EcommerceMessageDocument = {
 type CustomerIdentity = {
   visitor_id: string;
   visitor_name: string;
+  customer_email?: string;
+  customer_phone?: string;
   store_id: string;
   store_name: string;
   inventory_item_reference: EcommerceInventoryItemReference;
@@ -91,6 +96,13 @@ export type EcommerceReadResult = {
   updated_count: number;
   read_at: Date;
   reader_type: EcommerceChatSenderType;
+};
+
+export type EcommerceCustomerContactInput = {
+  store_id: string;
+  visitor_id: string;
+  contact_type: 'email' | 'phone';
+  contact_value: string;
 };
 
 export class EcommerceChatRepository {
@@ -155,7 +167,6 @@ export class EcommerceChatRepository {
         $set: {
           store_name: input.store_name,
           inventory_item_reference: input.inventory_item_reference,
-          visitor_name: input.visitor_name,
           last_message_id: message_id.toHexString(),
           last_message_preview: input.body.slice(0, 160),
           last_message_sender_type: 'website_customer',
@@ -253,6 +264,76 @@ export class EcommerceChatRepository {
       .toArray();
   }
 
+  async synchronize_customer_identity(
+    identity: CustomerIdentity
+  ): Promise<EcommerceConversationDocument | null> {
+    const conversation_key = ['e_commerce', identity.store_id, identity.visitor_id].join(':');
+    const conversation = await this.conversations.findOne({ conversation_key });
+    if (!conversation) {
+      return null;
+    }
+    const identity_updates: {
+      visitor_name?: string;
+      customer_email?: string;
+      customer_phone?: string;
+      customer_contact_updated_at?: Date;
+      updated_at?: Date;
+    } = {};
+
+    if (identity.visitor_name !== 'Visitante' && identity.visitor_name !== conversation.visitor_name) {
+      identity_updates.visitor_name = identity.visitor_name;
+    }
+    if (identity.customer_email && identity.customer_email !== conversation.customer_email) {
+      identity_updates.customer_email = identity.customer_email;
+    }
+    if (identity.customer_phone && identity.customer_phone !== conversation.customer_phone) {
+      identity_updates.customer_phone = identity.customer_phone;
+    }
+    if (identity_updates.customer_email || identity_updates.customer_phone) {
+      identity_updates.customer_contact_updated_at = new Date();
+    }
+    if (Object.keys(identity_updates).length === 0) {
+      return conversation;
+    }
+
+    identity_updates.updated_at = new Date();
+    await this.conversations.updateOne(
+      { conversation_key },
+      { $set: identity_updates }
+    );
+
+    return this.conversations.findOne({ conversation_key });
+  }
+
+  async update_customer_contact(
+    input: EcommerceCustomerContactInput
+  ): Promise<EcommerceConversationDocument> {
+    const now = new Date();
+    const contact_update = input.contact_type === 'email'
+      ? { customer_email: input.contact_value }
+      : { customer_phone: input.contact_value };
+    const result = await this.conversations.findOneAndUpdate(
+      {
+        store_id: input.store_id,
+        visitor_id: input.visitor_id
+      },
+      {
+        $set: {
+          ...contact_update,
+          customer_contact_updated_at: now,
+          updated_at: now
+        }
+      },
+      { returnDocument: 'after' }
+    );
+
+    if (!result) {
+      throw new Error('ecommerce_conversation_not_found');
+    }
+
+    return result;
+  }
+
   async list_customer_messages(
     identity: Pick<CustomerIdentity, 'store_id' | 'visitor_id'>,
     pagination: MessagePagination
@@ -303,6 +384,9 @@ export class EcommerceChatRepository {
       store_name: input.store_name,
       visitor_id: input.visitor_id,
       visitor_name: input.visitor_name,
+      ...(input.customer_email ? { customer_email: input.customer_email } : {}),
+      ...(input.customer_phone ? { customer_phone: input.customer_phone } : {}),
+      ...((input.customer_email || input.customer_phone) ? { customer_contact_updated_at: now } : {}),
       status: 'waiting',
       inventory_item_reference: input.inventory_item_reference,
       created_at: now,

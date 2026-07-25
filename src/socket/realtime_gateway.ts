@@ -9,7 +9,10 @@ import type {
   ChatAttendantRole,
   ChatMessageDocument
 } from '../repositories/chat_repository.js';
-import type { EcommerceMessageDocument } from '../repositories/ecommerce_chat_repository.js';
+import type {
+  EcommerceConversationDocument,
+  EcommerceMessageDocument
+} from '../repositories/ecommerce_chat_repository.js';
 import type { NotificationDocument } from '../repositories/notification_repository.js';
 
 type ChatReadPublishInput = {
@@ -127,6 +130,24 @@ export class RealtimeGateway {
     ];
 
     this.io.to(target_rooms).emit('ecommerce_chat:message', serialize_ecommerce_message(message));
+  }
+
+  publish_ecommerce_contact(conversation: EcommerceConversationDocument): void {
+    const target_rooms = [
+      store_attendant_room(conversation.store_id, 'master'),
+      store_attendant_room(conversation.store_id, 'seller'),
+      ecommerce_customer_room(conversation.store_id, conversation.visitor_id)
+    ];
+
+    this.io.to(target_rooms).emit('ecommerce_chat:contact', {
+      conversation_id: conversation._id.toHexString(),
+      store_id: conversation.store_id,
+      ...(conversation.customer_email ? { customer_email: conversation.customer_email } : {}),
+      ...(conversation.customer_phone ? { customer_phone: conversation.customer_phone } : {}),
+      ...(conversation.customer_contact_updated_at ? {
+        customer_contact_updated_at: conversation.customer_contact_updated_at.toISOString()
+      } : {})
+    });
   }
 
   publish_ecommerce_read(input: EcommerceReadPublishInput): void {

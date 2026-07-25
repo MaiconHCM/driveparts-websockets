@@ -81,6 +81,11 @@ export function serialize_ecommerce_conversation(conversation: EcommerceConversa
     store_name: conversation.store_name,
     visitor_id: conversation.visitor_id,
     visitor_name: conversation.visitor_name,
+    ...(conversation.customer_email ? { customer_email: conversation.customer_email } : {}),
+    ...(conversation.customer_phone ? { customer_phone: conversation.customer_phone } : {}),
+    ...(conversation.customer_contact_updated_at ? {
+      customer_contact_updated_at: conversation.customer_contact_updated_at.toISOString()
+    } : {}),
     status: conversation.status,
     inventory_item_reference: conversation.inventory_item_reference,
     ...(conversation.responsible_user_id ? { responsible_user_id: conversation.responsible_user_id } : {}),
@@ -105,6 +110,11 @@ export function serialize_ecommerce_customer_conversation(conversation: Ecommerc
     channel: conversation.channel,
     store_id: conversation.store_id,
     store_name: conversation.store_name,
+    ...(conversation.customer_email ? { customer_email: conversation.customer_email } : {}),
+    ...(conversation.customer_phone ? { customer_phone: conversation.customer_phone } : {}),
+    ...(conversation.customer_contact_updated_at ? {
+      customer_contact_updated_at: conversation.customer_contact_updated_at.toISOString()
+    } : {}),
     status: conversation.status,
     inventory_item_reference: conversation.inventory_item_reference,
     created_at: conversation.created_at.toISOString(),
