@@ -153,6 +153,7 @@ export class EcommerceChatRepository {
       { _id: conversation._id },
       {
         $set: {
+          store_name: input.store_name,
           inventory_item_reference: input.inventory_item_reference,
           visitor_name: input.visitor_name,
           last_message_id: message_id.toHexString(),
