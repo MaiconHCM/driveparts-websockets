@@ -1,6 +1,7 @@
 services:
   websocket:
     image: driveparts-websocket:latest
+    pull_policy: build
     build:
       context: .
       dockerfile: Dockerfile

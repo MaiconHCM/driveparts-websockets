@@ -100,6 +100,8 @@ O deploy constrói a imagem local `driveparts-websocket:latest` diretamente dest
 repositório. Não é necessário publicar nem baixar a aplicação pelo Docker Hub.
 Os segredos continuam apenas no `.env` local (já no `.gitignore`/`.dockerignore`)
 e são interpolados pelo Compose; nunca são versionados nem embutidos na imagem.
+O `pull_policy: build` evita tentativas de pull da imagem da aplicação e faz o
+Compose reconstruí-la a partir do código local ao subir o stack.
 
 ### Primeiro deploy na VPS
 
@@ -118,6 +120,10 @@ git pull --ff-only
 docker compose up -d --build
 docker compose logs -f
 ```
+
+No Dockge, a ação de pull apenas ignora a imagem local. Antes de recriar o stack
+com código novo, atualize o checkout com `git pull --ff-only`; o Dockge não atualiza
+repositórios Git automaticamente.
 
 O serviço sobe na porta `PORT` (padrão `3010`), exposta direto no host.
 O TLS / reverse proxy (nginx, Cloudflare) fica por fora do compose.
