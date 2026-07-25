@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { chat_send_schema, chat_sync_schema, internal_notification_schema } from '../src/contracts/schemas.js';
+import {
+  chat_send_schema,
+  chat_sync_schema,
+  ecommerce_chat_customer_send_schema,
+  ecommerce_chat_store_send_schema,
+  internal_notification_schema,
+  socket_jwt_payload_schema
+} from '../src/contracts/schemas.js';
 
 describe('realtime contracts', () => {
   it('accepts chat payload with snake case keys', () => {
@@ -80,5 +87,51 @@ describe('realtime contracts', () => {
     });
 
     expect(payload.type).toBe('listing_updated');
+  });
+
+  it('accepts a scoped anonymous website customer token', () => {
+    const payload = socket_jwt_payload_schema.parse({
+      actor_type: 'website_customer',
+      visitor_id: 'visitor_1',
+      visitor_name: 'Visitante',
+      store_id: 'store_1',
+      store_name: 'Loja 1',
+      inventory_item_id: 'inventory_item_1',
+      inventory_item_name: 'Motor',
+      inventory_item_url: 'https://mercadodrive.com.br/peca/motor/inventory_item_1',
+      permissions: ['ecommerce_chat_send', 'ecommerce_chat_read']
+    });
+
+    expect(payload.actor_type).toBe('website_customer');
+    expect(payload.store_id).toBe('store_1');
+  });
+
+  it('requires actor type on store user tokens', () => {
+    expect(() => socket_jwt_payload_schema.parse({
+      user_id: 'user_1',
+      user_name: 'Vendedor',
+      user_role: 'seller',
+      store_id: 'store_1',
+      permissions: ['chat_send']
+    })).toThrow();
+  });
+
+  it('keeps customer and store ecommerce message contracts separate', () => {
+    const customer_payload = ecommerce_chat_customer_send_schema.parse({
+      body: 'Esta peça ainda está disponível?',
+      client_message_id: 'customer_message_1'
+    });
+    const store_payload = ecommerce_chat_store_send_schema.parse({
+      conversation_id: 'conversation_1',
+      body: 'Sim, está disponível.',
+      client_message_id: 'store_message_1'
+    });
+
+    expect(customer_payload.body).toContain('disponível');
+    expect(store_payload.conversation_id).toBe('conversation_1');
+    expect(() => ecommerce_chat_customer_send_schema.parse({
+      conversation_id: 'forged_conversation',
+      body: 'teste'
+    })).toThrow();
   });
 });

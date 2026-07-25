@@ -9,11 +9,16 @@ Atualizado em 2026-05-28.
 O serviço hoje cobre:
 
 - atendimento entre lojas
+- atendimento de visitantes do e-commerce
 - notificações internas
 - presença online por `store_id`
 
 Toda persistência e payload externo seguem `snake_case`, e a referência de loja é sempre `store_id`.
 Notificações podem ser de loja inteira ou direcionadas por `user_id`.
+
+O MercadoDrive deve usar o mesmo `WEBSOCKET_JWT_SECRET` deste serviço. Tokens de
+visitante usam `actor_type=website_customer` e ficam limitados à combinação assinada
+de `store_id`, `visitor_id` e `inventory_item_id`.
 
 ## Stack
 
@@ -40,6 +45,10 @@ Recebidos:
 - `chat:send`
 - `chat:sync`
 - `chat:read`
+- `ecommerce_chat:send`
+- `ecommerce_chat:sync`
+- `ecommerce_chat:read`
+- `ecommerce_chat:conversations`
 - `notification:sync`
 - `notification:read`
 - `presence:sync`
@@ -49,6 +58,9 @@ Emitidos:
 - `connection:ready`
 - `chat:message`
 - `chat:read`
+- `ecommerce_chat:message`
+- `ecommerce_chat:read`
+- `ecommerce_chat:presence`
 - `notification:new`
 - `notification:read`
 - `presence:update`
@@ -58,6 +70,8 @@ Emitidos:
 - `attendance_threads`
 - `attendance_messages`
 - `attendance_settings`
+- `ecommerce_conversations`
+- `ecommerce_messages`
 - `websocket_notifications`
 - `store_presence`
 

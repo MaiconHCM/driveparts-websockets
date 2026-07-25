@@ -20,11 +20,7 @@ export function install_socket_auth(io: Server, config: AppConfig): void {
       const decoded = jwt.verify(token, config.websocket_jwt_secret);
       const payload = socket_jwt_payload_schema.parse(decoded);
 
-      socket.data.user_id = payload.user_id;
-      socket.data.user_name = payload.user_name;
-      socket.data.user_role = payload.user_role;
-      socket.data.store_id = payload.store_id;
-      socket.data.permissions = payload.permissions;
+      Object.assign(socket.data, payload);
 
       next();
     } catch {

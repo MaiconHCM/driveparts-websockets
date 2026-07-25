@@ -23,12 +23,7 @@ const chat_reference_schema = z.object({
   thumbnail_url: z.string().trim().min(1).max(2000).optional()
 }).strict();
 
-export const socket_jwt_payload_schema = z.object({
-  user_id: id_value,
-  user_name: z.string().trim().min(1).max(160).default('Usuário'),
-  user_role: z.enum(['master', 'seller', 'other']).default('other'),
-  store_id: id_value,
-  permissions: z.array(z.string().regex(lower_snake_case_value)).default([]),
+const socket_registered_claims_shape = {
   iat: z.number().optional(),
   exp: z.number().optional(),
   nbf: z.number().optional(),
@@ -36,9 +31,40 @@ export const socket_jwt_payload_schema = z.object({
   aud: z.union([z.string(), z.array(z.string())]).optional(),
   sub: z.string().optional(),
   jti: z.string().optional()
+};
+
+export const socket_store_user_jwt_payload_schema = z.object({
+  actor_type: z.literal('store_user'),
+  user_id: id_value,
+  user_name: z.string().trim().min(1).max(160).default('Usuário'),
+  user_role: z.enum(['master', 'seller', 'other']).default('other'),
+  store_id: id_value,
+  permissions: z.array(z.string().regex(lower_snake_case_value)).default([]),
+  ...socket_registered_claims_shape
 }).strict();
 
+export const socket_website_customer_jwt_payload_schema = z.object({
+  actor_type: z.literal('website_customer'),
+  visitor_id: id_value,
+  visitor_name: z.string().trim().min(1).max(160).default('Visitante'),
+  store_id: id_value,
+  store_name: z.string().trim().min(1).max(160),
+  inventory_item_id: id_value,
+  inventory_item_name: z.string().trim().min(1).max(255),
+  inventory_item_url: z.string().trim().url().max(2000),
+  inventory_item_thumbnail_url: z.string().trim().url().max(2000).optional(),
+  permissions: z.array(z.string().regex(lower_snake_case_value)).default([]),
+  ...socket_registered_claims_shape
+}).strict();
+
+export const socket_jwt_payload_schema = z.discriminatedUnion('actor_type', [
+  socket_store_user_jwt_payload_schema,
+  socket_website_customer_jwt_payload_schema
+]);
+
 export type SocketJwtPayload = z.infer<typeof socket_jwt_payload_schema>;
+export type SocketStoreUserJwtPayload = z.infer<typeof socket_store_user_jwt_payload_schema>;
+export type SocketWebsiteCustomerJwtPayload = z.infer<typeof socket_website_customer_jwt_payload_schema>;
 
 export const chat_send_schema = z.object({
   recipient_store_id: id_value,
@@ -85,6 +111,66 @@ export const chat_read_schema = z.object({
 }).strict();
 
 export type ChatReadInput = z.infer<typeof chat_read_schema>;
+
+export const ecommerce_chat_customer_send_schema = z.object({
+  body: z.string().trim().min(1).max(4000),
+  client_message_id: optional_id_value
+}).strict();
+
+export type EcommerceChatCustomerSendInput = z.infer<typeof ecommerce_chat_customer_send_schema>;
+
+export const ecommerce_chat_store_send_schema = z.object({
+  conversation_id: id_value,
+  body: z.string().trim().min(1).max(4000),
+  client_message_id: optional_id_value
+}).strict();
+
+export type EcommerceChatStoreSendInput = z.infer<typeof ecommerce_chat_store_send_schema>;
+
+export const ecommerce_chat_customer_sync_schema = z.object({
+  before_message_id: optional_id_value,
+  after_message_id: optional_id_value,
+  limit: z.number().int().min(1).max(100).default(50)
+}).strict().superRefine((input, ctx) => {
+  if (input.before_message_id && input.after_message_id) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['before_message_id'],
+      message: 'before_message_id_and_after_message_id_are_mutually_exclusive'
+    });
+  }
+});
+
+export type EcommerceChatCustomerSyncInput = z.infer<typeof ecommerce_chat_customer_sync_schema>;
+
+export const ecommerce_chat_store_sync_schema = z.object({
+  conversation_id: id_value,
+  before_message_id: optional_id_value,
+  after_message_id: optional_id_value,
+  limit: z.number().int().min(1).max(100).default(50)
+}).strict().superRefine((input, ctx) => {
+  if (input.before_message_id && input.after_message_id) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['before_message_id'],
+      message: 'before_message_id_and_after_message_id_are_mutually_exclusive'
+    });
+  }
+});
+
+export type EcommerceChatStoreSyncInput = z.infer<typeof ecommerce_chat_store_sync_schema>;
+
+export const ecommerce_chat_conversations_schema = z.object({
+  limit: z.number().int().min(1).max(100).default(50)
+}).strict();
+
+export type EcommerceChatConversationsInput = z.infer<typeof ecommerce_chat_conversations_schema>;
+
+export const ecommerce_chat_store_read_schema = z.object({
+  conversation_id: id_value
+}).strict();
+
+export const ecommerce_chat_customer_read_schema = z.object({}).strict();
 
 export const notification_sync_schema = z.object({
   after_notification_id: optional_id_value,

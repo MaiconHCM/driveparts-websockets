@@ -12,7 +12,7 @@ services:
       LOG_LEVEL: info
       SOCKET_PATH: /socket.io
       MAX_CHAT_MESSAGE_LENGTH: "4000"
-      CORS_ORIGINS: https://driveparts.com.br,https://www.driveparts.com.br
+      CORS_ORIGINS: https://driveparts.com.br,https://www.driveparts.com.br,https://mercadodrive.com.br,https://www.mercadodrive.com.br,https://mercadodrivehomologacao.saken2.virtuaserver.com.br
       MONGODB_DB: driveparts
       MONGODB_URL: mongodb://driveparts:${MONGODB_PASSWORD}@186.226.61.22
       REDIS_URL: redis://172.17.0.1:6379

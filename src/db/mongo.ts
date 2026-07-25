@@ -51,6 +51,21 @@ export async function ensure_indexes(db: Db): Promise<void> {
     db.collection('attendance_settings').createIndexes([
       { key: { store_id: 1 }, unique: true, name: 'store_id_1' }
     ]),
+    db.collection('ecommerce_conversations').createIndexes([
+      { key: { conversation_key: 1 }, unique: true, name: 'conversation_key_1' },
+      { key: { store_id: 1, last_message_at: -1 }, name: 'store_id_1_last_message_at_-1' },
+      { key: { store_id: 1, visitor_id: 1 }, name: 'store_id_1_visitor_id_1' }
+    ]),
+    db.collection('ecommerce_messages').createIndexes([
+      { key: { conversation_id: 1, created_at: 1 }, name: 'conversation_id_1_created_at_1' },
+      { key: { store_id: 1, created_at: -1 }, name: 'store_id_1_created_at_-1' },
+      {
+        key: { idempotency_key: 1 },
+        unique: true,
+        name: 'idempotency_key_1',
+        partialFilterExpression: { idempotency_key: { $exists: true } }
+      }
+    ]),
     db.collection('websocket_notifications').createIndexes([
       { key: { store_id: 1, created_at: -1 }, name: 'store_id_1_created_at_-1' },
       { key: { store_id: 1, user_id: 1, created_at: -1 }, name: 'store_id_1_user_id_1_created_at_-1' },

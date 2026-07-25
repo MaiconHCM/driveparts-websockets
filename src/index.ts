@@ -4,6 +4,7 @@ import { create_logger } from './config/logger.js';
 import { connect_mongo, ensure_indexes } from './db/mongo.js';
 import { create_http_app } from './http/app.js';
 import { ChatRepository } from './repositories/chat_repository.js';
+import { EcommerceChatRepository } from './repositories/ecommerce_chat_repository.js';
 import { NotificationRepository } from './repositories/notification_repository.js';
 import { PresenceRepository } from './repositories/presence_repository.js';
 import { create_socket_server } from './socket/server.js';
@@ -16,6 +17,7 @@ async function main(): Promise<void> {
   await ensure_indexes(mongo.db);
 
   const chat_repository = new ChatRepository(mongo.db);
+  const ecommerce_chat_repository = new EcommerceChatRepository(mongo.db);
   const notification_repository = new NotificationRepository(mongo.db);
   const presence_repository = new PresenceRepository(mongo.db);
   const server = createServer();
@@ -23,6 +25,7 @@ async function main(): Promise<void> {
     config,
     logger,
     chat_repository,
+    ecommerce_chat_repository,
     notification_repository,
     presence_repository
   });

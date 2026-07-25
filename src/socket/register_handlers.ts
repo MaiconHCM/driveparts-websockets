@@ -6,6 +6,13 @@ import {
   chat_read_schema,
   chat_send_schema,
   chat_sync_schema,
+  ecommerce_chat_conversations_schema,
+  ecommerce_chat_customer_read_schema,
+  ecommerce_chat_customer_send_schema,
+  ecommerce_chat_customer_sync_schema,
+  ecommerce_chat_store_read_schema,
+  ecommerce_chat_store_send_schema,
+  ecommerce_chat_store_sync_schema,
   notification_read_schema,
   notification_sync_schema,
   presence_sync_schema
@@ -16,9 +23,16 @@ import {
   type ChatAttendanceResponsibleDocument,
   type ChatRepository
 } from '../repositories/chat_repository.js';
+import type { EcommerceChatRepository } from '../repositories/ecommerce_chat_repository.js';
 import type { NotificationRepository } from '../repositories/notification_repository.js';
 import type { PresenceRepository } from '../repositories/presence_repository.js';
-import { serialize_chat_message, serialize_notification } from '../serializers/realtime.js';
+import {
+  serialize_chat_message,
+  serialize_ecommerce_conversation,
+  serialize_ecommerce_customer_conversation,
+  serialize_ecommerce_message,
+  serialize_notification
+} from '../serializers/realtime.js';
 import type { AuthenticatedSocket } from './auth.js';
 import type { RealtimeGateway, StorePresencePayload } from './realtime_gateway.js';
 
@@ -29,6 +43,7 @@ type HandlerDependencies = {
   config: AppConfig;
   logger: AppLogger;
   chat_repository: ChatRepository;
+  ecommerce_chat_repository: EcommerceChatRepository;
   notification_repository: NotificationRepository;
   presence_repository: PresenceRepository;
   realtime_gateway: RealtimeGateway;
@@ -37,6 +52,11 @@ type HandlerDependencies = {
 export function register_socket_handlers(deps: HandlerDependencies): void {
   deps.io.on('connection', async (socket) => {
     const authenticated_socket = socket as AuthenticatedSocket;
+    if (authenticated_socket.data.actor_type === 'website_customer') {
+      await register_ecommerce_customer_socket(authenticated_socket, deps);
+      return;
+    }
+
     const store_id = authenticated_socket.data.store_id;
     const user_id = authenticated_socket.data.user_id;
     const user_name = authenticated_socket.data.user_name;
@@ -46,6 +66,7 @@ export function register_socket_handlers(deps: HandlerDependencies): void {
       user_id
     );
 
+    await authenticated_socket.join(deps.realtime_gateway.join_store_presence_listener_room());
     await authenticated_socket.join(deps.realtime_gateway.join_store_room(store_id));
     await authenticated_socket.join(deps.realtime_gateway.join_user_room(user_id));
     if (is_chat_attendant_role(user_role)) {
@@ -59,6 +80,7 @@ export function register_socket_handlers(deps: HandlerDependencies): void {
 
     authenticated_socket.emit('connection:ready', {
       socket_id: authenticated_socket.id,
+      actor_type: 'store_user',
       store_id,
       user_id,
       user_name,
@@ -167,6 +189,114 @@ export function register_socket_handlers(deps: HandlerDependencies): void {
       }
     });
 
+    authenticated_socket.on('ecommerce_chat:conversations', async (payload, ack?: AckCallback<unknown>) => {
+      if (!is_chat_attendant_role(user_role)) {
+        send_ack(ack, error_ack('forbidden', 'ecommerce_chat_attendant_role_required'));
+        return;
+      }
+
+      try {
+        const input = ecommerce_chat_conversations_schema.parse(payload ?? {});
+        const conversations = await deps.ecommerce_chat_repository.list_store_conversations(store_id, input.limit);
+
+        send_ack(ack, ok_ack({
+          conversations: conversations.map(serialize_ecommerce_conversation)
+        }));
+      } catch (error) {
+        deps.logger.warn({ error, store_id, user_id }, 'ecommerce_chat_conversations_failed');
+        send_ack(ack, error_ack('invalid_payload', 'invalid_ecommerce_chat_conversations_payload'));
+      }
+    });
+
+    authenticated_socket.on('ecommerce_chat:sync', async (payload, ack?: AckCallback<unknown>) => {
+      if (!is_chat_attendant_role(user_role)) {
+        send_ack(ack, error_ack('forbidden', 'ecommerce_chat_attendant_role_required'));
+        return;
+      }
+
+      try {
+        const input = ecommerce_chat_store_sync_schema.parse(payload ?? {});
+        const result = await deps.ecommerce_chat_repository.list_store_messages(
+          store_id,
+          input.conversation_id,
+          input
+        );
+
+        send_ack(ack, ok_ack({
+          conversation: result.conversation ? serialize_ecommerce_conversation(result.conversation) : null,
+          messages: result.messages.map(serialize_ecommerce_message),
+          has_more: result.has_more
+        }));
+      } catch (error) {
+        deps.logger.warn({ error, store_id, user_id }, 'ecommerce_chat_store_sync_failed');
+        send_ack(ack, error_ack('invalid_payload', 'invalid_ecommerce_chat_sync_payload'));
+      }
+    });
+
+    authenticated_socket.on('ecommerce_chat:send', async (payload, ack?: AckCallback<unknown>) => {
+      if (!is_chat_attendant_role(user_role)) {
+        send_ack(ack, error_ack('forbidden', 'ecommerce_chat_attendant_role_required'));
+        return;
+      }
+
+      try {
+        const input = ecommerce_chat_store_send_schema.parse(payload);
+        if (input.body.length > deps.config.max_chat_message_length) {
+          send_ack(ack, error_ack('invalid_payload', 'message_too_long'));
+          return;
+        }
+
+        const message = await deps.ecommerce_chat_repository.create_store_message({
+          conversation_id: input.conversation_id,
+          store_id,
+          sender_user_id: user_id,
+          sender_name: user_name,
+          sender_user_role: user_role,
+          body: input.body,
+          client_message_id: input.client_message_id
+        });
+
+        deps.realtime_gateway.publish_ecommerce_message(message);
+        send_ack(ack, ok_ack({ message: serialize_ecommerce_message(message) }));
+      } catch (error) {
+        deps.logger.warn({ error, store_id, user_id }, 'ecommerce_chat_store_send_failed');
+        send_ack(ack, error_ack('invalid_payload', get_ecommerce_error_message(error)));
+      }
+    });
+
+    authenticated_socket.on('ecommerce_chat:read', async (payload, ack?: AckCallback<unknown>) => {
+      if (!is_chat_attendant_role(user_role)) {
+        send_ack(ack, error_ack('forbidden', 'ecommerce_chat_attendant_role_required'));
+        return;
+      }
+
+      try {
+        const input = ecommerce_chat_store_read_schema.parse(payload);
+        const read_result = await deps.ecommerce_chat_repository.mark_store_read(
+          store_id,
+          input.conversation_id
+        );
+
+        if (read_result.conversation && read_result.updated_count > 0) {
+          deps.realtime_gateway.publish_ecommerce_read({
+            conversation_id: read_result.conversation._id.toHexString(),
+            store_id: read_result.conversation.store_id,
+            visitor_id: read_result.conversation.visitor_id,
+            reader_type: read_result.reader_type,
+            read_at: read_result.read_at
+          });
+        }
+
+        send_ack(ack, ok_ack({
+          updated_count: read_result.updated_count,
+          read_at: read_result.read_at.toISOString()
+        }));
+      } catch (error) {
+        deps.logger.warn({ error, store_id, user_id }, 'ecommerce_chat_store_read_failed');
+        send_ack(ack, error_ack('invalid_payload', 'invalid_ecommerce_chat_read_payload'));
+      }
+    });
+
     authenticated_socket.on('notification:sync', async (payload, ack?: AckCallback<unknown>) => {
       try {
         const input = notification_sync_schema.parse(payload ?? {});
@@ -220,37 +350,217 @@ export function register_socket_handlers(deps: HandlerDependencies): void {
   });
 }
 
+async function register_ecommerce_customer_socket(
+  socket: AuthenticatedSocket,
+  deps: HandlerDependencies
+): Promise<void> {
+  if (socket.data.actor_type !== 'website_customer') {
+    return;
+  }
+
+  const identity = socket.data;
+  const customer_room = deps.realtime_gateway.join_ecommerce_customer_room(
+    identity.store_id,
+    identity.visitor_id
+  );
+
+  await socket.join(customer_room);
+  await socket.join(deps.realtime_gateway.join_ecommerce_presence_room(identity.store_id));
+
+  deps.logger.info({
+    socket_id: socket.id,
+    actor_type: identity.actor_type,
+    store_id: identity.store_id,
+    visitor_id: identity.visitor_id
+  }, 'ecommerce_customer_socket_connected');
+
+  socket.emit('connection:ready', {
+    socket_id: socket.id,
+    actor_type: identity.actor_type,
+    store_id: identity.store_id,
+    visitor_id: identity.visitor_id
+  });
+
+  const [initial_messages, presence] = await Promise.all([
+    deps.ecommerce_chat_repository.list_customer_messages(identity, { limit: 50 }),
+    resolve_store_presence([identity.store_id], deps)
+  ]);
+  socket.emit('ecommerce_chat:sync', {
+    conversation: initial_messages.conversation
+      ? serialize_ecommerce_customer_conversation(initial_messages.conversation)
+      : null,
+    messages: initial_messages.messages.map(serialize_ecommerce_message),
+    has_more: initial_messages.has_more
+  });
+  socket.emit('ecommerce_chat:presence', {
+    presence: presence[0] ?? {
+      store_id: identity.store_id,
+      online: false
+    }
+  });
+
+  socket.on('ecommerce_chat:send', async (payload, ack?: AckCallback<unknown>) => {
+    if (!identity.permissions.includes('ecommerce_chat_send')) {
+      send_ack(ack, error_ack('forbidden', 'ecommerce_chat_send_not_allowed'));
+      return;
+    }
+    if (!deps.realtime_gateway.consume_ecommerce_customer_message_quota(
+      identity.store_id,
+      identity.visitor_id
+    )) {
+      send_ack(ack, error_ack('rate_limited', 'ecommerce_chat_rate_limit_exceeded'));
+      return;
+    }
+
+    try {
+      const input = ecommerce_chat_customer_send_schema.parse(payload);
+      if (input.body.length > deps.config.max_chat_message_length) {
+        send_ack(ack, error_ack('invalid_payload', 'message_too_long'));
+        return;
+      }
+
+      const message = await deps.ecommerce_chat_repository.create_customer_message({
+        visitor_id: identity.visitor_id,
+        visitor_name: identity.visitor_name,
+        store_id: identity.store_id,
+        store_name: identity.store_name,
+        inventory_item_reference: {
+          inventory_item_id: identity.inventory_item_id,
+          inventory_item_name: identity.inventory_item_name,
+          inventory_item_url: identity.inventory_item_url,
+          ...(identity.inventory_item_thumbnail_url ? {
+            inventory_item_thumbnail_url: identity.inventory_item_thumbnail_url
+          } : {})
+        },
+        body: input.body,
+        client_message_id: input.client_message_id
+      });
+
+      deps.realtime_gateway.publish_ecommerce_message(message);
+      send_ack(ack, ok_ack({ message: serialize_ecommerce_message(message) }));
+    } catch (error) {
+      deps.logger.warn({
+        error,
+        store_id: identity.store_id,
+        visitor_id: identity.visitor_id
+      }, 'ecommerce_chat_customer_send_failed');
+      send_ack(ack, error_ack('invalid_payload', get_ecommerce_error_message(error)));
+    }
+  });
+
+  socket.on('ecommerce_chat:sync', async (payload, ack?: AckCallback<unknown>) => {
+    if (!identity.permissions.includes('ecommerce_chat_read')) {
+      send_ack(ack, error_ack('forbidden', 'ecommerce_chat_read_not_allowed'));
+      return;
+    }
+
+    try {
+      const input = ecommerce_chat_customer_sync_schema.parse(payload ?? {});
+      const result = await deps.ecommerce_chat_repository.list_customer_messages(identity, input);
+
+      send_ack(ack, ok_ack({
+        conversation: result.conversation
+          ? serialize_ecommerce_customer_conversation(result.conversation)
+          : null,
+        messages: result.messages.map(serialize_ecommerce_message),
+        has_more: result.has_more
+      }));
+    } catch (error) {
+      deps.logger.warn({
+        error,
+        store_id: identity.store_id,
+        visitor_id: identity.visitor_id
+      }, 'ecommerce_chat_customer_sync_failed');
+      send_ack(ack, error_ack('invalid_payload', 'invalid_ecommerce_chat_sync_payload'));
+    }
+  });
+
+  socket.on('ecommerce_chat:read', async (payload, ack?: AckCallback<unknown>) => {
+    if (!identity.permissions.includes('ecommerce_chat_read')) {
+      send_ack(ack, error_ack('forbidden', 'ecommerce_chat_read_not_allowed'));
+      return;
+    }
+
+    try {
+      ecommerce_chat_customer_read_schema.parse(payload ?? {});
+      const read_result = await deps.ecommerce_chat_repository.mark_customer_read(
+        identity.store_id,
+        identity.visitor_id
+      );
+
+      if (read_result.conversation && read_result.updated_count > 0) {
+        deps.realtime_gateway.publish_ecommerce_read({
+          conversation_id: read_result.conversation._id.toHexString(),
+          store_id: read_result.conversation.store_id,
+          visitor_id: read_result.conversation.visitor_id,
+          reader_type: read_result.reader_type,
+          read_at: read_result.read_at
+        });
+      }
+
+      send_ack(ack, ok_ack({
+        updated_count: read_result.updated_count,
+        read_at: read_result.read_at.toISOString()
+      }));
+    } catch (error) {
+      deps.logger.warn({
+        error,
+        store_id: identity.store_id,
+        visitor_id: identity.visitor_id
+      }, 'ecommerce_chat_customer_read_failed');
+      send_ack(ack, error_ack('invalid_payload', 'invalid_ecommerce_chat_read_payload'));
+    }
+  });
+
+  socket.on('disconnect', (reason) => {
+    deps.logger.info({
+      socket_id: socket.id,
+      store_id: identity.store_id,
+      visitor_id: identity.visitor_id,
+      reason
+    }, 'ecommerce_customer_socket_disconnected');
+  });
+}
+
 async function send_presence_sync(
   store_ids: string[],
   deps: HandlerDependencies,
   ack?: AckCallback<unknown>
 ): Promise<void> {
   try {
-    const realtime_presence = deps.realtime_gateway.list_store_presence(store_ids);
-    const missing_store_ids = realtime_presence
-      .filter((presence) => presence.online !== true && !presence.last_seen_at)
-      .map((presence) => presence.store_id);
-    const persisted_presence = await deps.presence_repository.list_presence(missing_store_ids);
-    const persisted_presence_by_store_id = new Map(
-      persisted_presence.map((presence) => [presence.store_id, presence])
-    );
-    const presence = realtime_presence.map((presence_item): StorePresencePayload => {
-      const persisted_presence_item = persisted_presence_by_store_id.get(presence_item.store_id);
-      if (presence_item.last_seen_at || !persisted_presence_item) {
-        return presence_item;
-      }
-
-      return {
-        ...presence_item,
-        last_seen_at: persisted_presence_item.last_seen_at.toISOString()
-      };
-    });
+    const presence = await resolve_store_presence(store_ids, deps);
 
     send_ack(ack, ok_ack({ presence }));
   } catch (error) {
     deps.logger.warn({ error }, 'presence_sync_failed');
     send_ack(ack, error_ack('invalid_payload', 'invalid_presence_sync_payload'));
   }
+}
+
+async function resolve_store_presence(
+  store_ids: string[],
+  deps: HandlerDependencies
+): Promise<StorePresencePayload[]> {
+  const realtime_presence = deps.realtime_gateway.list_store_presence(store_ids);
+  const missing_store_ids = realtime_presence
+    .filter((presence) => presence.online !== true && !presence.last_seen_at)
+    .map((presence) => presence.store_id);
+  const persisted_presence = await deps.presence_repository.list_presence(missing_store_ids);
+  const persisted_presence_by_store_id = new Map(
+    persisted_presence.map((presence) => [presence.store_id, presence])
+  );
+
+  return realtime_presence.map((presence_item): StorePresencePayload => {
+    const persisted_presence_item = persisted_presence_by_store_id.get(presence_item.store_id);
+    if (presence_item.last_seen_at || !persisted_presence_item) {
+      return presence_item;
+    }
+
+    return {
+      ...presence_item,
+      last_seen_at: persisted_presence_item.last_seen_at.toISOString()
+    };
+  });
 }
 
 async function handle_store_disconnect(
@@ -324,4 +634,15 @@ function normalize_socket_chat_user_role(user_role: string, store_id: string, us
   }
 
   return store_id !== '' && user_id !== '' && store_id === user_id ? 'master' : 'other';
+}
+
+function get_ecommerce_error_message(error: unknown): string {
+  if (error instanceof Error && [
+    'ecommerce_conversation_closed',
+    'ecommerce_conversation_not_found'
+  ].includes(error.message)) {
+    return error.message;
+  }
+
+  return 'invalid_ecommerce_chat_payload';
 }

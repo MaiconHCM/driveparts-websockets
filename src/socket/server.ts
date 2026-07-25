@@ -5,6 +5,7 @@ import { Server } from 'socket.io';
 import type { AppConfig } from '../config/app_config.js';
 import type { AppLogger } from '../config/logger.js';
 import type { ChatRepository } from '../repositories/chat_repository.js';
+import type { EcommerceChatRepository } from '../repositories/ecommerce_chat_repository.js';
 import type { NotificationRepository } from '../repositories/notification_repository.js';
 import type { PresenceRepository } from '../repositories/presence_repository.js';
 import { install_socket_auth } from './auth.js';
@@ -15,6 +16,7 @@ type SocketServerDependencies = {
   config: AppConfig;
   logger: AppLogger;
   chat_repository: ChatRepository;
+  ecommerce_chat_repository: EcommerceChatRepository;
   notification_repository: NotificationRepository;
   presence_repository: PresenceRepository;
 };
@@ -62,6 +64,7 @@ export async function create_socket_server(
     config: deps.config,
     logger: deps.logger,
     chat_repository: deps.chat_repository,
+    ecommerce_chat_repository: deps.ecommerce_chat_repository,
     notification_repository: deps.notification_repository,
     presence_repository: deps.presence_repository,
     realtime_gateway

@@ -1,10 +1,15 @@
 import type { Server } from 'socket.io';
-import { serialize_chat_message, serialize_notification } from '../serializers/realtime.js';
+import {
+  serialize_chat_message,
+  serialize_ecommerce_message,
+  serialize_notification
+} from '../serializers/realtime.js';
 import type {
   ChatAttendanceResponsibleDocument,
   ChatAttendantRole,
   ChatMessageDocument
 } from '../repositories/chat_repository.js';
+import type { EcommerceMessageDocument } from '../repositories/ecommerce_chat_repository.js';
 import type { NotificationDocument } from '../repositories/notification_repository.js';
 
 type ChatReadPublishInput = {
@@ -12,6 +17,14 @@ type ChatReadPublishInput = {
   attendance_thread_id: string;
   participant_store_ids: string[];
   attendance_responsibles?: ChatAttendanceResponsibleDocument[];
+  read_at: Date;
+};
+
+type EcommerceReadPublishInput = {
+  conversation_id: string;
+  store_id: string;
+  visitor_id: string;
+  reader_type: 'website_customer' | 'store_user';
   read_at: Date;
 };
 
@@ -24,8 +37,14 @@ export type StorePresencePayload = {
 export class RealtimeGateway {
   private readonly store_socket_ids = new Map<string, Set<string>>();
   private readonly store_last_seen_at = new Map<string, Date>();
+  private readonly ecommerce_customer_message_timestamps = new Map<string, number[]>();
+  private last_ecommerce_message_quota_cleanup_at = 0;
 
   constructor(private readonly io: Server) {}
+
+  join_store_presence_listener_room(): string {
+    return store_presence_listener_room();
+  }
 
   join_store_room(store_id: string): string {
     return store_room(store_id);
@@ -37,6 +56,41 @@ export class RealtimeGateway {
 
   join_store_attendant_room(store_id: string, user_role: ChatAttendantRole): string {
     return store_attendant_room(store_id, user_role);
+  }
+
+  join_ecommerce_customer_room(store_id: string, visitor_id: string): string {
+    return ecommerce_customer_room(store_id, visitor_id);
+  }
+
+  join_ecommerce_presence_room(store_id: string): string {
+    return ecommerce_presence_room(store_id);
+  }
+
+  consume_ecommerce_customer_message_quota(store_id: string, visitor_id: string): boolean {
+    const rate_limit_key = [store_id, visitor_id].join(':');
+    const now = Date.now();
+    const one_minute_ago = now - 60000;
+
+    if (now - this.last_ecommerce_message_quota_cleanup_at >= 60000) {
+      for (const [stored_key, stored_timestamps] of this.ecommerce_customer_message_timestamps) {
+        if (!stored_timestamps.some((timestamp) => timestamp >= one_minute_ago)) {
+          this.ecommerce_customer_message_timestamps.delete(stored_key);
+        }
+      }
+      this.last_ecommerce_message_quota_cleanup_at = now;
+    }
+
+    const recent_timestamps = (this.ecommerce_customer_message_timestamps.get(rate_limit_key) ?? [])
+      .filter((timestamp) => timestamp >= one_minute_ago);
+
+    if (recent_timestamps.length >= 10) {
+      this.ecommerce_customer_message_timestamps.set(rate_limit_key, recent_timestamps);
+      return false;
+    }
+
+    recent_timestamps.push(now);
+    this.ecommerce_customer_message_timestamps.set(rate_limit_key, recent_timestamps);
+    return true;
   }
 
   publish_chat_message(message: ChatMessageDocument): void {
@@ -63,6 +117,31 @@ export class RealtimeGateway {
     }
 
     this.io.to(Array.from(target_rooms)).emit('chat:read', payload);
+  }
+
+  publish_ecommerce_message(message: EcommerceMessageDocument): void {
+    const target_rooms = [
+      store_attendant_room(message.store_id, 'master'),
+      store_attendant_room(message.store_id, 'seller'),
+      ecommerce_customer_room(message.store_id, message.visitor_id)
+    ];
+
+    this.io.to(target_rooms).emit('ecommerce_chat:message', serialize_ecommerce_message(message));
+  }
+
+  publish_ecommerce_read(input: EcommerceReadPublishInput): void {
+    const target_rooms = [
+      store_attendant_room(input.store_id, 'master'),
+      store_attendant_room(input.store_id, 'seller'),
+      ecommerce_customer_room(input.store_id, input.visitor_id)
+    ];
+
+    this.io.to(target_rooms).emit('ecommerce_chat:read', {
+      conversation_id: input.conversation_id,
+      store_id: input.store_id,
+      reader_type: input.reader_type,
+      read_at: input.read_at.toISOString()
+    });
   }
 
   private add_chat_visibility_rooms(
@@ -125,7 +204,10 @@ export class RealtimeGateway {
   }
 
   publish_store_presence(presence: StorePresencePayload): void {
-    this.io.emit('presence:update', presence);
+    this.io.to([
+      store_presence_listener_room(),
+      ecommerce_presence_room(presence.store_id)
+    ]).emit('presence:update', presence);
   }
 
   publish_notification(notification: NotificationDocument): void {
@@ -160,4 +242,16 @@ function user_room(user_id: string): string {
 
 function store_attendant_room(store_id: string, user_role: ChatAttendantRole): string {
   return `store_attendant:${store_id}:${user_role}`;
+}
+
+function ecommerce_customer_room(store_id: string, visitor_id: string): string {
+  return `ecommerce_customer:${store_id}:${visitor_id}`;
+}
+
+function ecommerce_presence_room(store_id: string): string {
+  return `ecommerce_presence:${store_id}`;
+}
+
+function store_presence_listener_room(): string {
+  return 'store_presence_listener';
 }
