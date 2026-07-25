@@ -1,4 +1,11 @@
-import { Collection, Db, Filter, ObjectId } from 'mongodb';
+import {
+  Collection,
+  Db,
+  Filter,
+  ObjectId,
+  type ClientSession
+} from 'mongodb';
+import { build_compound_key } from '../utils/compound_key.js';
 
 export type EcommerceChatSenderType = 'website_customer' | 'store_user';
 
@@ -98,6 +105,11 @@ export type EcommerceReadResult = {
   reader_type: EcommerceChatSenderType;
 };
 
+export type EcommerceCustomerIdentitySyncResult = {
+  conversation: EcommerceConversationDocument | null;
+  changed: boolean;
+};
+
 export type EcommerceCustomerContactInput = {
   store_id: string;
   visitor_id: string;
@@ -109,19 +121,39 @@ export class EcommerceChatRepository {
   private readonly conversations: Collection<EcommerceConversationDocument>;
   private readonly messages: Collection<EcommerceMessageDocument>;
 
-  constructor(db: Db) {
+  constructor(
+    private readonly db: Db,
+    private readonly transactions_enabled = false
+  ) {
     this.conversations = db.collection<EcommerceConversationDocument>('ecommerce_conversations');
     this.messages = db.collection<EcommerceMessageDocument>('ecommerce_messages');
   }
 
   async create_customer_message(input: CreateCustomerMessageInput): Promise<EcommerceMessageDocument> {
     const idempotency_key = input.client_message_id
-      ? ['website_customer', input.store_id, input.visitor_id, input.client_message_id].join(':')
+      ? build_compound_key('ecommerce_customer_message', [
+        input.store_id,
+        input.visitor_id,
+        input.client_message_id
+      ])
       : '';
     if (idempotency_key !== '') {
-      const existing_message = await this.messages.findOne({ idempotency_key });
-      if (existing_message) {
-        return existing_message;
+      const legacy_idempotency_key = legacy_customer_idempotency_key(input);
+      const canonical_message = await this.messages.findOne({ idempotency_key });
+      if (canonical_message) {
+        if (validate_customer_idempotent_message(canonical_message, input)) {
+          return canonical_message;
+        }
+        throw new Error('client_message_id_conflict');
+      }
+      const legacy_message = await this.messages.findOne({
+        idempotency_key: legacy_idempotency_key
+      });
+      if (
+        legacy_message
+        && validate_customer_idempotent_message(legacy_message, input)
+      ) {
+        return legacy_message;
       }
     }
 
@@ -149,35 +181,47 @@ export class EcommerceChatRepository {
     };
 
     try {
-      await this.messages.insertOne(message);
+      await this.execute_atomic(async (session) => {
+        await this.messages.insertOne(message, session_options(session));
+        const conversation_update = await this.conversations.updateOne(
+          {
+            _id: conversation._id,
+            status: { $ne: 'closed' }
+          },
+          [{
+            $set: {
+              store_name: { $literal: input.store_name },
+              inventory_item_reference: { $literal: input.inventory_item_reference },
+              unread_store_count: {
+                $add: [{ $ifNull: ['$unread_store_count', 0] }, 1]
+              },
+              ...build_latest_message_fields({
+                message_id: message_id.toHexString(),
+                message_preview: input.body.slice(0, 160),
+                sender_type: 'website_customer',
+                created_at: now
+              })
+            }
+          }],
+          session_options(session)
+        );
+        if (conversation_update.matchedCount === 0) {
+          throw new Error('ecommerce_conversation_closed');
+        }
+      });
     } catch (error) {
       if (idempotency_key !== '' && is_duplicate_key_error(error)) {
         const existing_message = await this.messages.findOne({ idempotency_key });
-        if (existing_message) {
+        if (
+          existing_message
+          && validate_customer_idempotent_message(existing_message, input)
+        ) {
           return existing_message;
         }
       }
 
       throw error;
     }
-
-    await this.conversations.updateOne(
-      { _id: conversation._id },
-      {
-        $set: {
-          store_name: input.store_name,
-          inventory_item_reference: input.inventory_item_reference,
-          last_message_id: message_id.toHexString(),
-          last_message_preview: input.body.slice(0, 160),
-          last_message_sender_type: 'website_customer',
-          last_message_at: now,
-          updated_at: now
-        },
-        $inc: {
-          unread_store_count: 1
-        }
-      }
-    );
 
     return message;
   }
@@ -192,12 +236,30 @@ export class EcommerceChatRepository {
     }
 
     const idempotency_key = input.client_message_id
-      ? ['store_user', input.store_id, input.sender_user_id, input.client_message_id].join(':')
+      ? build_compound_key('ecommerce_store_message', [
+        input.store_id,
+        input.sender_user_id,
+        input.conversation_id,
+        input.client_message_id
+      ])
       : '';
     if (idempotency_key !== '') {
-      const existing_message = await this.messages.findOne({ idempotency_key });
-      if (existing_message) {
-        return existing_message;
+      const legacy_idempotency_key = legacy_store_idempotency_key(input);
+      const canonical_message = await this.messages.findOne({ idempotency_key });
+      if (canonical_message) {
+        if (validate_store_idempotent_message(canonical_message, input)) {
+          return canonical_message;
+        }
+        throw new Error('client_message_id_conflict');
+      }
+      const legacy_message = await this.messages.findOne({
+        idempotency_key: legacy_idempotency_key
+      });
+      if (
+        legacy_message
+        && validate_store_idempotent_message(legacy_message, input)
+      ) {
+        return legacy_message;
       }
     }
 
@@ -221,11 +283,49 @@ export class EcommerceChatRepository {
     };
 
     try {
-      await this.messages.insertOne(message);
+      await this.execute_atomic(async (session) => {
+        await this.messages.insertOne(message, session_options(session));
+        const conversation_update = await this.conversations.updateOne(
+          {
+            _id: conversation._id,
+            status: { $ne: 'closed' }
+          },
+          [{
+            $set: {
+              status: 'open',
+              responsible_user_id: {
+                $ifNull: ['$responsible_user_id', { $literal: input.sender_user_id }]
+              },
+              responsible_user_name: {
+                $ifNull: ['$responsible_user_name', { $literal: input.sender_name }]
+              },
+              responsible_user_role: {
+                $ifNull: ['$responsible_user_role', { $literal: input.sender_user_role }]
+              },
+              unread_customer_count: {
+                $add: [{ $ifNull: ['$unread_customer_count', 0] }, 1]
+              },
+              ...build_latest_message_fields({
+                message_id: message_id.toHexString(),
+                message_preview: input.body.slice(0, 160),
+                sender_type: 'store_user',
+                created_at: now
+              })
+            }
+          }],
+          session_options(session)
+        );
+        if (conversation_update.matchedCount === 0) {
+          throw new Error('ecommerce_conversation_closed');
+        }
+      });
     } catch (error) {
       if (idempotency_key !== '' && is_duplicate_key_error(error)) {
         const existing_message = await this.messages.findOne({ idempotency_key });
-        if (existing_message) {
+        if (
+          existing_message
+          && validate_store_idempotent_message(existing_message, input)
+        ) {
           return existing_message;
         }
       }
@@ -233,50 +333,38 @@ export class EcommerceChatRepository {
       throw error;
     }
 
-    await this.conversations.updateOne(
-      { _id: conversation._id },
-      {
-        $set: {
-          status: 'open',
-          responsible_user_id: conversation.responsible_user_id ?? input.sender_user_id,
-          responsible_user_name: conversation.responsible_user_name ?? input.sender_name,
-          responsible_user_role: conversation.responsible_user_role ?? input.sender_user_role,
-          last_message_id: message_id.toHexString(),
-          last_message_preview: input.body.slice(0, 160),
-          last_message_sender_type: 'store_user',
-          last_message_at: now,
-          updated_at: now
-        },
-        $inc: {
-          unread_customer_count: 1
-        }
-      }
-    );
-
     return message;
   }
 
   async list_store_conversations(store_id: string, limit: number): Promise<EcommerceConversationDocument[]> {
     return this.conversations
       .find({ store_id })
-      .sort({ last_message_at: -1, updated_at: -1 })
+      .sort({ last_message_at: -1, updated_at: -1, _id: -1 })
       .limit(limit)
       .toArray();
   }
 
   async synchronize_customer_identity(
     identity: CustomerIdentity
-  ): Promise<EcommerceConversationDocument | null> {
-    const conversation_key = ['e_commerce', identity.store_id, identity.visitor_id].join(':');
-    const conversation = await this.conversations.findOne({ conversation_key });
+  ): Promise<EcommerceCustomerIdentitySyncResult> {
+    const conversation = await this.conversations.findOne({
+      channel: 'e_commerce',
+      store_id: identity.store_id,
+      visitor_id: identity.visitor_id
+    });
     if (!conversation) {
-      return null;
+      return {
+        conversation: null,
+        changed: false
+      };
     }
     const identity_updates: {
       visitor_name?: string;
       customer_email?: string;
       customer_phone?: string;
       customer_contact_updated_at?: Date;
+      store_name?: string;
+      inventory_item_reference?: EcommerceInventoryItemReference;
       updated_at?: Date;
     } = {};
 
@@ -289,20 +377,35 @@ export class EcommerceChatRepository {
     if (identity.customer_phone && identity.customer_phone !== conversation.customer_phone) {
       identity_updates.customer_phone = identity.customer_phone;
     }
+    if (identity.store_name !== conversation.store_name) {
+      identity_updates.store_name = identity.store_name;
+    }
+    if (!inventory_references_equal(
+      identity.inventory_item_reference,
+      conversation.inventory_item_reference
+    )) {
+      identity_updates.inventory_item_reference = identity.inventory_item_reference;
+    }
     if (identity_updates.customer_email || identity_updates.customer_phone) {
       identity_updates.customer_contact_updated_at = new Date();
     }
     if (Object.keys(identity_updates).length === 0) {
-      return conversation;
+      return {
+        conversation,
+        changed: false
+      };
     }
 
     identity_updates.updated_at = new Date();
     await this.conversations.updateOne(
-      { conversation_key },
+      { _id: conversation._id },
       { $set: identity_updates }
     );
 
-    return this.conversations.findOne({ conversation_key });
+    return {
+      conversation: await this.conversations.findOne({ _id: conversation._id }),
+      changed: true
+    };
   }
 
   async update_customer_contact(
@@ -369,13 +472,21 @@ export class EcommerceChatRepository {
   }
 
   private async ensure_customer_conversation(input: CustomerIdentity): Promise<EcommerceConversationDocument> {
-    const conversation_key = ['e_commerce', input.store_id, input.visitor_id].join(':');
-    const existing_conversation = await this.conversations.findOne({ conversation_key });
+    const conversation_filter = {
+      channel: 'e_commerce' as const,
+      store_id: input.store_id,
+      visitor_id: input.visitor_id
+    };
+    const existing_conversation = await this.conversations.findOne(conversation_filter);
     if (existing_conversation) {
       return existing_conversation;
     }
 
     const now = new Date();
+    const conversation_key = build_compound_key('ecommerce_conversation', [
+      input.store_id,
+      input.visitor_id
+    ]);
     const conversation: EcommerceConversationDocument = {
       _id: new ObjectId(),
       conversation_key,
@@ -400,7 +511,7 @@ export class EcommerceChatRepository {
       return conversation;
     } catch (error) {
       if (is_duplicate_key_error(error)) {
-        const concurrent_conversation = await this.conversations.findOne({ conversation_key });
+        const concurrent_conversation = await this.conversations.findOne(conversation_filter);
         if (concurrent_conversation) {
           return concurrent_conversation;
         }
@@ -489,38 +600,126 @@ export class EcommerceChatRepository {
     const unread_sender_type: EcommerceChatSenderType = reader_type === 'website_customer'
       ? 'store_user'
       : 'website_customer';
-    const result = await this.messages.updateMany(
-      {
-        conversation_id: conversation._id.toHexString(),
-        sender_type: unread_sender_type,
-        read_at: { $exists: false }
-      },
-      {
-        $set: { read_at }
-      }
-    );
     const unread_count_field = reader_type === 'website_customer'
       ? 'unread_customer_count'
       : 'unread_store_count';
-
-    if (result.modifiedCount > 0) {
-      await this.conversations.updateOne(
-        { _id: conversation._id },
+    const updated_count = await this.execute_atomic(async (session) => {
+      const result = await this.messages.updateMany(
         {
-          $inc: {
-            [unread_count_field]: -result.modifiedCount
-          }
-        }
+          conversation_id: conversation._id.toHexString(),
+          sender_type: unread_sender_type,
+          read_at: { $exists: false }
+        },
+        {
+          $set: { read_at }
+        },
+        session_options(session)
       );
-    }
+
+      if (result.modifiedCount > 0) {
+        await this.conversations.updateOne(
+          { _id: conversation._id },
+          [{
+            $set: {
+              [unread_count_field]: {
+                $max: [
+                  0,
+                  {
+                    $subtract: [
+                      { $ifNull: [`$${unread_count_field}`, 0] },
+                      result.modifiedCount
+                    ]
+                  }
+                ]
+              }
+            }
+          }],
+          session_options(session)
+        );
+      }
+
+      return result.modifiedCount;
+    });
 
     return {
       conversation,
-      updated_count: result.modifiedCount,
+      updated_count,
       read_at,
       reader_type
     };
   }
+
+  private async execute_atomic<T>(
+    operation: (session?: ClientSession) => Promise<T>
+  ): Promise<T> {
+    if (!this.transactions_enabled) {
+      return operation();
+    }
+
+    const session = this.db.client.startSession();
+    try {
+      let completed = false;
+      let result: T | undefined;
+      await session.withTransaction(
+        async () => {
+          result = await operation(session);
+          completed = true;
+        },
+        {
+          readConcern: { level: 'snapshot' },
+          writeConcern: { w: 'majority' },
+          readPreference: 'primary',
+          maxCommitTimeMS: 5000
+        }
+      );
+      if (!completed) {
+        throw new Error('mongodb_transaction_aborted');
+      }
+      return result as T;
+    } finally {
+      await session.endSession();
+    }
+  }
+}
+
+function build_latest_message_fields(input: {
+  message_id: string;
+  message_preview: string;
+  sender_type: EcommerceChatSenderType;
+  created_at: Date;
+}) {
+  const is_newest_message = {
+    $lt: [
+      { $ifNull: ['$last_message_id', ''] },
+      { $literal: input.message_id }
+    ]
+  };
+  const latest_value = (field_name: string, value: unknown) => ({
+    $cond: [
+      is_newest_message,
+      { $literal: value },
+      `$${field_name}`
+    ]
+  });
+
+  return {
+    last_message_id: latest_value('last_message_id', input.message_id),
+    last_message_preview: latest_value('last_message_preview', input.message_preview),
+    last_message_sender_type: latest_value('last_message_sender_type', input.sender_type),
+    last_message_at: latest_value('last_message_at', input.created_at),
+    updated_at: {
+      $cond: [
+        {
+          $gt: [
+            { $literal: input.created_at },
+            { $ifNull: ['$updated_at', { $literal: new Date(0) }] }
+          ]
+        },
+        { $literal: input.created_at },
+        '$updated_at'
+      ]
+    }
+  };
 }
 
 function is_duplicate_key_error(error: unknown): boolean {
@@ -528,4 +727,71 @@ function is_duplicate_key_error(error: unknown): boolean {
     && error !== null
     && 'code' in error
     && (error as { code?: number }).code === 11000;
+}
+
+function session_options(session: ClientSession | undefined) {
+  return session ? { session } : undefined;
+}
+
+function legacy_customer_idempotency_key(input: CreateCustomerMessageInput): string {
+  return [
+    'website_customer',
+    input.store_id,
+    input.visitor_id,
+    input.client_message_id
+  ].join(':');
+}
+
+function legacy_store_idempotency_key(input: CreateStoreMessageInput): string {
+  return [
+    'store_user',
+    input.store_id,
+    input.sender_user_id,
+    input.client_message_id
+  ].join(':');
+}
+
+function validate_customer_idempotent_message(
+  message: EcommerceMessageDocument,
+  input: CreateCustomerMessageInput
+): boolean {
+  const same_identity = message.sender_type === 'website_customer'
+    && message.store_id === input.store_id
+    && message.visitor_id === input.visitor_id
+    && message.client_message_id === input.client_message_id;
+  if (!same_identity) {
+    return false;
+  }
+  if (message.body !== input.body) {
+    throw new Error('client_message_id_conflict');
+  }
+  return true;
+}
+
+function validate_store_idempotent_message(
+  message: EcommerceMessageDocument,
+  input: CreateStoreMessageInput
+): boolean {
+  const same_identity = message.sender_type === 'store_user'
+    && message.store_id === input.store_id
+    && message.sender_user_id === input.sender_user_id
+    && message.conversation_id === input.conversation_id
+    && message.client_message_id === input.client_message_id;
+  if (!same_identity) {
+    return false;
+  }
+  if (message.body !== input.body) {
+    throw new Error('client_message_id_conflict');
+  }
+  return true;
+}
+
+function inventory_references_equal(
+  left: EcommerceInventoryItemReference,
+  right: EcommerceInventoryItemReference
+): boolean {
+  return left.inventory_item_id === right.inventory_item_id
+    && left.inventory_item_name === right.inventory_item_name
+    && left.inventory_item_url === right.inventory_item_url
+    && left.inventory_item_thumbnail_url === right.inventory_item_thumbnail_url;
 }

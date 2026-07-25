@@ -1,32 +1,36 @@
-# Atendimento entre lojas no websocket
+# Realtime de atendimento e e-commerce
 
-Atualizado em 2026-05-28.
+Atualizado em 2026-07-25.
 
-Este documento descreve o funcionamento atual do serviço websocket em `/var/www/driveparts-webSocket` para o fluxo de atendimento entre lojas e suas dependências de notificação/presença.
+Este documento descreve o contrato atual do serviço `driveparts_websocket`. O
+MongoDB é a fonte de verdade; o Socket.IO distribui atualizações em tempo real e
+o Redis oferece coordenação entre instâncias, cache curto, presença e rate
+limit.
 
-## Papel do serviço
+## Organização do código
 
-O websocket é o ponto de realtime do atendimento. Ele:
+- `src/socket/register_handlers.ts`: cria o controle de trabalho e encaminha o
+  socket conforme `actor_type`.
+- `src/socket/handlers/store.ts`: bootstrap e eventos do usuário de loja.
+- `src/socket/handlers/customer.ts`: bootstrap e eventos do cliente do
+  e-commerce.
+- `src/socket/handlers/shared.ts`: ACKs, limite de eventos em andamento,
+  permissões e tratamento uniforme de erros.
+- `src/socket/realtime_gateway.ts`: rooms, invalidação de cache e publicação.
+- `src/services/`: cache de sincronização, presença e rate limit.
+- `src/redis/runtime.ts`: clientes Redis e adapter Redis Streams.
+- `src/repositories/`: persistência e regras de domínio.
 
-- autentica o socket com JWT
-- recebe envio de mensagens
-- cria ou reusa threads
-- grava `attendance_threads` e `attendance_messages`
-- aplica a regra de responsável único
-- publica eventos para as salas corretas
-- sincroniza notificações e presença
+Os listeners de eventos são instalados antes de iniciar o bootstrap assíncrono.
+Assim, um evento enviado cedo não é perdido: recebe ACK `not_ready`, com
+`retryable: true`. Cada socket também respeita
+`SOCKET_MAX_IN_FLIGHT_EVENTS` (padrão `8`); acima disso, o ACK é `busy`.
 
-O serviço não renderiza UI. A UI está no DriveParts PHP.
-
-## Rotas HTTP expostas
-
-Arquivo: `src/http/app.ts`
+## Rotas HTTP
 
 ### `GET /health/live`
 
-Health check simples do processo.
-
-Resposta:
+Confirma apenas que o processo HTTP está vivo:
 
 ```json
 {
@@ -37,416 +41,403 @@ Resposta:
 
 ### `GET /health/ready`
 
-Valida conectividade com MongoDB.
-
-Resposta esperada:
+Executa, em paralelo e com timeout, um `ping` no MongoDB e a verificação do
+Redis. Quando `REDIS_URL` está configurada, os dois clientes Redis precisam
+estar prontos e responder: o cliente do adapter e o cliente de comandos.
 
 ```json
 {
   "ok": true,
   "service": "driveparts_websocket",
-  "mongodb": "ready"
+  "mongodb": "ready",
+  "redis": "ready"
 }
 ```
+
+Sem Redis configurado, `redis` é `disabled` e a aplicação pode ficar pronta em
+modo de instância única. Falha de MongoDB, falha de qualquer cliente Redis
+habilitado ou encerramento em andamento retorna `503`.
+
+Durante o encerramento, `/health/live` continua disponível, `/health/ready`
+retorna `503` com `status=shutting_down` e todas as rotas não-health retornam
+`503` antes de autenticação, parsing ou persistência.
 
 ### `POST /internal/notifications`
 
-Publica notificação interna para uma loja.
-
-Regras:
-
-- exige `x-internal-token`
-- chama `assert_payload_keys_are_snake_case()`
-- valida o corpo com `internal_notification_schema`
-- persiste em `websocket_notifications`
-- publica `notification:new`
-
-Payload aceito hoje:
-
-- `store_id`
-- `user_id` opcional para notificação individual
-- `type`:
-  - `listing_updated`
-  - `listing_error`
-  - `attendance_transfer`
-- `entity`:
-  - `listing`
-  - `inventory_item`
-  - `integration`
-  - `attendance_thread`
+Persiste e publica uma notificação. Exige `x-internal-token`, chaves em
+`lower_snake_case` e payload válido. `idempotency_key` é opcional, mas
+recomendado.
 
 ### `POST /internal/chat-messages/publish`
 
-Reemite uma mensagem de chat já persistida no Mongo para os rooms corretos.
-
-Regras:
-
-- exige `x-internal-token`
-- chama `assert_payload_keys_are_snake_case()`
-- valida o corpo com `internal_chat_message_schema`
-- busca a mensagem em `attendance_messages`
-- carrega metadados de responsáveis da thread
-- publica `chat:message`
-
-Payload:
+Busca uma mensagem já persistida pelo `message_id` e a publica novamente nas
+rooms autorizadas. Exige `x-internal-token`:
 
 ```json
 {
-  "message_id": "message_id"
+  "message_id": "507f1f77bcf86cd799439011"
 }
 ```
 
-## Autenticação do socket
+Uma republicação pode gerar uma entrega duplicada no cliente.
 
-Arquivos relevantes:
+## Autenticação e permissões
 
-- `src/socket/auth.ts`
-- `src/contracts/schemas.ts`
+O token pode ser enviado em `handshake.auth.token` ou como Bearer token. A
+assinatura usa `WEBSOCKET_JWT_SECRET`; o socket é desconectado quando o JWT
+expira.
 
-O JWT precisa conter pelo menos:
+Token de usuário de loja:
 
 ```json
 {
+  "actor_type": "store_user",
   "user_id": "user_id",
   "user_name": "Nome",
-  "user_role": "master|seller|other",
+  "user_role": "master",
   "store_id": "store_id",
-  "permissions": ["chat_send", "chat_read", "notification_read"],
+  "permissions": [
+    "chat_read",
+    "chat_send",
+    "notification_read",
+    "presence_read",
+    "ecommerce_chat_read",
+    "ecommerce_chat_send"
+  ],
   "iat": 0,
   "exp": 0
 }
 ```
 
-Hoje esse token é emitido pelo DriveParts PHP em `GET /sistema/realtime/socket-token`.
+Token do cliente do site:
 
-## Eventos Socket.IO
+```json
+{
+  "actor_type": "website_customer",
+  "visitor_id": "visitor_id",
+  "visitor_name": "Visitante",
+  "store_id": "store_id",
+  "store_name": "Loja",
+  "inventory_item_id": "item_id",
+  "inventory_item_name": "Produto",
+  "inventory_item_url": "https://example.test/item",
+  "permissions": [
+    "ecommerce_chat_read",
+    "ecommerce_chat_send",
+    "ecommerce_chat_contact"
+  ],
+  "iat": 0,
+  "exp": 0
+}
+```
 
-Arquivo principal: `src/socket/register_handlers.ts`
+`customer_email`, `customer_phone` e `inventory_item_thumbnail_url` são
+opcionais. Os schemas são estritos; campos fora do contrato são rejeitados.
 
-### Emitido ao conectar
+### Flags de compatibilidade
 
-#### `connection:ready`
+- `SOCKET_ENFORCE_PERMISSIONS=false` é o padrão de compatibilidade. Nesse modo,
+  as listas `permissions` não bloqueiam ações. Ative a flag somente depois que
+  todos os emissores de JWT enviarem as permissões necessárias.
+- `ALLOW_LEGACY_STORE_ID_MASTER_ROLE=false` é o padrão do código e dos arquivos
+  Compose do repositório. Quando ativada, apenas o token legado com
+  `user_role=other` e `store_id === user_id` é promovido a `master`, com
+  warning em log. A stack atualmente executada pelo Dockge mantém essa flag em
+  `true` de forma temporária porque ainda há tokens legados observados nos
+  logs; ela deve voltar a `false` após a migração dos emissores.
+
+Mesmo com enforcement de permissões desligado, ações de atendimento e
+e-commerce da loja continuam exigindo papel `master` ou `seller`.
+
+## Bootstrap da conexão
+
+### Usuário de loja
+
+Em uma conexão normal, a ordem é:
+
+1. autenticar e instalar todos os listeners;
+2. entrar somente nas rooms permitidas;
+3. registrar presença;
+4. carregar, em paralelo quando possível, os snapshots de chat e notificações;
+5. emitir `chat:sync` e `notification:sync`, quando autorizados;
+6. marcar o socket como pronto e emitir `connection:ready`.
+
+Portanto, o cliente deve registrar seus listeners antes de conectar. Todo
+snapshot inicial aplicável chega antes de `connection:ready`.
 
 ```json
 {
   "socket_id": "socket_id",
+  "actor_type": "store_user",
   "store_id": "store_id",
   "user_id": "user_id",
   "user_name": "Nome",
-  "user_role": "master|seller|other"
+  "user_role": "master",
+  "recovered": false
 }
 ```
 
-Depois disso o servidor já dispara sincronização inicial de chat e notificações.
+### Cliente do e-commerce
 
-### Eventos recebidos do cliente
+Com os listeners já instalados, o bootstrap sincroniza a identidade do
+visitante, entra nas rooms autorizadas e emite:
 
-#### `chat:send`
+1. `ecommerce_chat:sync`, quando há permissão de leitura;
+2. `ecommerce_chat:presence`;
+3. `connection:ready`.
 
-Schema: `chat_send_schema`
+O payload de prontidão contém `actor_type`, `store_id`, `visitor_id`,
+`socket_id` e `recovered`.
+
+## Eventos
+
+Todos os eventos recebidos aceitam ACK no formato:
 
 ```json
 {
-  "recipient_store_id": "store_id",
-  "attendance_thread_id": "opcional",
-  "client_thread_id": "opcional",
-  "body": "texto",
-  "client_message_id": "opcional",
-  "attachments": [],
-  "reference": {
-    "type": "inventory_item",
-    "inventory_item_id": "inventory_item_id",
-    "marketplace_name": "Título da peça",
-    "stock_keeping_unit": "SKU da peça",
-    "price": 123.45,
-    "thumbnail_url": "/uploads/..."
-  }
+  "ok": true,
+  "data": {}
 }
 ```
 
-Regras importantes:
+Erros usam `ok: false`, `error.code`, `error.message` e, quando aplicável,
+dados como `retryable`, `retry_after_seconds` ou
+`attendance_responsible`.
 
-- `recipient_store_id` precisa ser diferente do `store_id` autenticado
-- a mensagem precisa ter ao menos `body`, `attachments` ou `reference`
-- `body` respeita `max_chat_message_length`
-- `client_message_id` é usado para idempotência
-- só `master` e `seller` podem enviar
+### Recebidos de usuário de loja
 
-Erros de responsabilidade:
+- `chat:send`, `chat:sync`, `chat:read`
+- `ecommerce_chat:conversations`, `ecommerce_chat:sync`
+- `ecommerce_chat:send`, `ecommerce_chat:read`
+- `notification:sync`, `notification:read`
+- `presence:sync`
 
-- `attendance_attendant_role_required`
-- `attendance_side_already_assigned`
+`client_message_id` fornece idempotência para envios de chat. A leitura e a
+sincronização usam IDs Mongo como cursores; `before_message_id` e
+`after_message_id` são mutuamente exclusivos.
 
-Quando `attendance_side_already_assigned` acontece, o ack inclui `attendance_responsible`.
+### Recebidos de cliente do e-commerce
 
-#### `chat:sync`
+- `ecommerce_chat:send`
+- `ecommerce_chat:contact`
+- `ecommerce_chat:sync`
+- `ecommerce_chat:read`
 
-Schema: `chat_sync_schema`
+Envio e atualização de contato consomem a mesma cota por loja e visitante. O
+padrão é `10` operações a cada `60` segundos.
 
-```json
-{
-  "peer_store_id": "opcional",
-  "attendance_thread_id": "opcional",
-  "before_message_id": "opcional",
-  "after_message_id": "opcional",
-  "limit": 50
-}
+### Emitidos pelo servidor
+
+- bootstrap: `chat:sync`, `notification:sync`, `ecommerce_chat:sync`,
+  `ecommerce_chat:presence`, `connection:ready`
+- chat entre lojas: `chat:message`, `chat:read`
+- e-commerce: `ecommerce_chat:message`, `ecommerce_chat:contact`,
+  `ecommerce_chat:read`
+- notificações: `notification:new`, `notification:read`
+- presença: `presence:update`
+
+`presence:update` é `volatile`: informação antiga não é acumulada, e uma nova
+sincronização reconstrói o estado.
+
+## Rooms e isolamento
+
+Os nomes são produzidos por:
+
+```text
+<domínio>:base64url(<store_id>):base64url(<identificador adicional>)
 ```
 
-Retorna:
+Base64url evita inserir IDs brutos ou separadores nos nomes, mas não é
+criptografia. O domínio e o `store_id` fazem parte da chave para impedir
+colisões entre recursos e lojas.
 
-- `messages`
-- `has_more`
+Rooms lógicas atuais:
 
-#### `chat:read`
+- `store(store_id)`
+- `chat_user(store_id, user_id)`
+- `notification_user(store_id, user_id)`
+- `store_chat_attendant(store_id, master|seller)`
+- `ecommerce_store_attendant(store_id, master|seller)`
+- `ecommerce_customer(store_id, visitor_id)`
+- `ecommerce_presence(store_id)`
+- `store_presence_listener(store_id)`
 
-Schema: `chat_read_schema`
+Chat entre lojas e chat do e-commerce usam domínios distintos. O usuário de
+loja só entra nas rooms compatíveis com seu papel e suas permissões. O
+`presence:sync` substitui dinamicamente as assinaturas de presença solicitadas.
 
-```json
-{
-  "attendance_thread_id": "thread_id"
-}
-```
+No chat entre lojas, `master` sempre recebe o lado da loja. Sem responsável, os
+`seller` também recebem; após a assunção, a publicação é direcionada ao usuário
+responsável. Notificação com `user_id` vai à room individual; sem `user_id`,
+vai à room da loja. Eventos de e-commerce vão aos atendentes `master` e
+`seller` da loja e ao visitante daquela conversa.
 
-Marca mensagens recebidas como lidas e, se houver alteração, publica `chat:read`.
+## Redis
 
-#### `notification:sync`
+Quando `REDIS_URL` está definida, são usados dois clientes:
 
-```json
-{
-  "after_notification_id": "opcional",
-  "unread_only": false,
-  "limit": 50
-}
-```
+- adapter: Redis Streams do Socket.IO para distribuição entre instâncias;
+- comandos: cache, presença, rate limit e verificações operacionais.
 
-#### `notification:read`
+O adapter usa um stream com `MAXLEN` aproximado de `10.000` entradas. Esse
+limite é por quantidade, não por tempo: o stream não tem TTL. Ele também não é
+uma fila de negócio nem substitui MongoDB ou uma outbox.
 
-```json
-{
-  "notification_id": "notification_id"
-}
-```
+### Cache de sincronização
 
-#### `presence:sync`
+Os snapshots iniciais têm cache curto e versionado. O padrão de
+`REDIS_SYNC_CACHE_TIME_TO_LIVE_SECONDS` é `15`; `0` desativa o cache. As
+gerações são substituídas por tokens aleatórios antes de publicações que
+alteram chat, notificação ou e-commerce. Isso evita reutilizar uma geração
+depois que a chave expira. Leituras concorrentes do mesmo snapshot são
+coalescidas e, se o Redis falhar, o serviço consulta o MongoDB diretamente.
 
-```json
-{
-  "store_ids": ["store_a", "store_b"]
-}
-```
+Esse TTL pertence apenas ao cache e às suas gerações; não controla a retenção do
+Redis Stream.
 
-### Eventos emitidos pelo servidor
+### Presença
 
-#### `chat:message`
+Sockets de uma loja são registrados em sorted sets com heartbeat. O padrão de
+`REDIS_SOCKET_PRESENCE_TIME_TO_LIVE_SECONDS` é `90`, e membros de instâncias
+que morreram expiram. `PRESENCE_PERSIST_INTERVAL_SECONDS` (padrão `15`) limita
+a frequência de persistência de `last_seen_at` no MongoDB. Lojas observadas por
+salas inscritas continuam sendo reconciliadas mesmo sem socket local. Sem
+Redis, há fallback local adequado a uma única instância.
 
-Payload serializado por `serialize_chat_message()`:
+### Rate limit
 
-- `message_id`
-- `attendance_thread_id`
-- `attendance_thread_key`
-- `client_thread_id`
-- `channel`
-- `sender_store_id`
-- `recipient_store_id`
-- `sender_user_id`
-- `sender_user_name`
-- `sender_user_role`
-- `message_type`
-- `attendance_transfer`
-- `body`
-- `status`
-- `created_at`
-- `attachments`
-- `reference`
-- `client_message_id`
-- `delivered_at`
-- `read_at`
-- `attendance_responsibles`
+O rate limit do cliente do e-commerce usa script Lua no Redis, com escopo por
+`store_id` e `visitor_id`. As variáveis são
+`ECOMMERCE_CUSTOMER_RATE_LIMIT_MAX` e
+`ECOMMERCE_CUSTOMER_RATE_LIMIT_WINDOW_SECONDS`. Se um Redis configurado não
+confirmar a operação, o ACK retorna `service_unavailable`, `retryable: true` e
+o limite falha fechado para não duplicar cotas após timeouts ambíguos. O
+limitador local, limitado em memória, só é usado quando `REDIS_URL` não foi
+configurada.
 
-#### `chat:read`
+## Recuperação de conexão
 
-```json
-{
-  "store_id": "store_que_leu",
-  "attendance_thread_id": "thread_id",
-  "read_at": "2026-05-28T00:00:00.000Z"
-}
-```
+`SOCKET_CONNECTION_RECOVERY_SECONDS=0` mantém o Connection State Recovery
+(CSR) desligado por padrão. Essa escolha evita restaurar automaticamente rooms,
+pacotes e autorização antigos antes que o contrato de recuperação de
+permissões e presença esteja totalmente validado; presença também é
+`volatile`.
 
-#### `notification:new`
+Se CSR for habilitado, o middleware continua sendo executado
+(`skipMiddlewares=false`) e a recuperação só é aceita quando ator, loja,
+usuário/visitante, papel e permissões coincidem. Em conexão recuperada, o
+Socket.IO restaura a sessão e o bootstrap não repete os snapshots. Com o padrão
+desligado, toda reconexão faz bootstrap e sincronização completos.
 
-Payload serializado por `serialize_notification()`.
+## Entrega, idempotência e reconciliação
 
-#### `notification:read`
+Não existe garantia exactly-once. Republicações e retries seguem uma semântica
+operacional at-least-once, portanto o mesmo evento pode chegar mais de uma vez.
+Com CSR desligado, um cliente desconectado também pode perder eventos de
+transporte; ao reconectar, deve reconciliar o estado pelos eventos de sync.
 
-```json
-{
-  "notification_id": "notification_id",
-  "store_id": "store_id",
-  "user_id": "user_id opcional",
-  "read_at": "2026-05-28T00:00:00.000Z"
-}
-```
+Clientes devem aplicar eventos de forma idempotente:
 
-#### `presence:update`
+- `chat:message` e `ecommerce_chat:message`: deduplicar por `message_id`;
+- envio otimista: correlacionar também por `client_message_id`;
+- notificações: deduplicar por `notification_id`;
+- leituras, contato e presença: substituir o estado da entidade/conversa e não
+  contar o evento como incremento.
 
-```json
-{
-  "store_id": "store_id",
-  "online": true,
-  "last_seen_at": "2026-05-28T00:00:00.000Z"
-}
-```
+O MongoDB continua sendo a fonte de verdade. Redis Streams distribui eventos
+entre instâncias, mas não oferece retenção de negócio.
 
-## Rooms e visibilidade
+## MongoDB e transações
 
-Arquivo: `src/socket/realtime_gateway.ts`
+`MONGODB_TRANSACTIONS_ENABLED=true` é o padrão e é usado no Compose externo.
+As operações atômicas usam leitura `snapshot`, escrita `majority` e primário.
+Isso requer replica set ou cluster MongoDB compatível com transações.
 
-Rooms usadas:
+O `compose.internal.yaml` usa MongoDB standalone e define a flag como `false`;
+nesse modo, as etapas são executadas sequencialmente, sem transação. A flag
+afeta atualizações relacionadas de mensagens, threads/conversas e leituras;
+sem transação, uma falha entre etapas pode exigir reconciliação no MongoDB.
 
-- `store:{store_id}`
-- `user:{user_id}`
-- `store_attendant:{store_id}:master`
-- `store_attendant:{store_id}:seller`
+### Índices criados no startup
 
-### Conexão
+`attendance_threads`:
 
-Ao conectar:
-
-- entra na room da loja
-- entra na room do usuário
-- se `user_role` for `master` ou `seller`, entra também na room de atendente da loja
-
-### Publicação de chat
-
-Para `chat:message` e `chat:read`, a visibilidade considera o responsável de cada lado:
-
-- `master` sempre entra na visibilidade do lado da loja
-- se existe responsável definido para a loja, publica para `user:{responsible_user_id}`
-- se ainda não existe responsável, publica para a room `store_attendant:{store_id}:seller`
-
-Isso é o que permite:
-
-- todos verem a conversa pendente antes da assunção
-- somente o responsável continuar vendo e respondendo quando a fila é individual
-
-### Publicação de notificações
-
-- se a notificação não tem `user_id`, publica para `store:{store_id}`
-- se a notificação tem `user_id`, publica somente para `user:{user_id}`
-
-## Regra de responsável único
-
-Arquivo principal: `src/repositories/chat_repository.ts`
-
-Pontos relevantes:
-
-- `attendance_settings` é consultada por `store_id`
-- se não existir documento, o padrão é `true`
-- `create_message()`:
-  - normaliza `sender_user_role`
-  - garante usuário atendente
-  - cria ou localiza a thread
-  - se a fila é individual, chama a checagem de posse do lado
-  - se o lado ainda não tinha responsável, atribui o usuário atual
-- o lado da thread é definido por `origin` e `target`
-
-Status de thread:
-
-- `waiting`: nem os dois lados estão assumidos
-- `open`: os dois lados já têm responsável quando a regra individual está ativa
-- `closed`: reservado para encerramento, não há UI ativa para isso hoje
-
-## Coleções e índices
-
-Arquivo: `src/db/mongo.ts`
-
-### `attendance_threads`
-
-Índices:
-
-- `attendance_thread_key_1` único
+- `attendance_thread_key_1` (único)
 - `participant_store_ids_1_updated_at_-1`
+- `origin_store_id_1_origin_responsible_user_id_1__id_1`
+- `target_store_id_1_target_responsible_user_id_1__id_1`
+- `channel_1_origin_store_id_1_target_store_id_1_client_thread_id_1`
+  (único parcial)
 
-### `attendance_messages`
-
-Índices:
+`attendance_messages`:
 
 - `attendance_thread_id_1_created_at_1`
+- `attendance_thread_id_1__id_1`
 - `client_thread_id_1_created_at_1`
 - `sender_store_id_1_created_at_-1`
+- `sender_store_id_1__id_1`
+- `recipient_store_id_1__id_1`
+- `sender_store_id_1_recipient_store_id_1__id_1`
 - `recipient_store_id_1_read_at_1_created_at_-1`
-- `sender_store_id_1_client_message_id_1` único parcial
+- `attendance_thread_id_1_recipient_store_id_1_read_at_1`
+- `sender_store_id_1_client_message_id_1` (único parcial)
 
-### `attendance_settings`
+`attendance_settings`:
 
-- `store_id_1` único
+- `store_id_1` (único)
 
-### `websocket_notifications`
+`ecommerce_conversations`:
+
+- `conversation_key_1` (único)
+- `store_id_1_last_message_at_-1`
+- `store_id_1_last_message_at_-1_updated_at_-1__id_-1`
+- `channel_1_store_id_1_visitor_id_1` (único)
+
+`ecommerce_messages`:
+
+- `conversation_id_1_created_at_1`
+- `conversation_id_1__id_1`
+- `conversation_id_1_sender_type_1_read_at_1`
+- `store_id_1_created_at_-1`
+- `idempotency_key_1` (único parcial)
+
+`websocket_notifications`:
 
 - `store_id_1_created_at_-1`
+- `store_id_1__id_1`
 - `store_id_1_user_id_1_created_at_-1`
+- `store_id_1_user_id_1__id_1`
 - `store_id_1_read_at_1_created_at_-1`
+- `store_id_1_read_at_1__id_1`
 - `store_id_1_user_id_1_read_at_1_created_at_-1`
-- `store_id_1_idempotency_key_1` único parcial
+- `store_id_1_user_id_1_read_at_1__id_1`
+- `store_id_1_idempotency_key_1` (único parcial)
 
-### `store_presence`
+`store_presence`:
 
-- `store_id_1` único
+- `store_id_1` (único)
 - `last_seen_at_-1`
 
-## Fluxo de mensagem ponta a ponta
+## Compose e rede
 
-1. DriveParts PHP emite token JWT por `store_id`
-2. cliente conecta no websocket
-3. cliente envia `chat:send`
-4. websocket valida schema e permissão
-5. `ChatRepository` garante thread e responsabilidade
-6. mensagem é persistida
-7. `attendance_threads` recebe `last_message_id`, `last_message_preview`, `last_message_at`, `updated_at`
-8. `RealtimeGateway.publish_chat_message()` publica `chat:message`
-9. frontend no DriveParts PHP ressincroniza a thread por HTTP para exibir estado consolidado
+O `compose.yaml` externo mapeia
+`host.docker.internal:host-gateway`; serviços instalados no host podem ser
+referenciados por esse alias quando a URL correspondente for configurada. O
+`compose.internal.yaml` não cria o alias porque MongoDB e Redis são acessados
+pelos nomes de serviço `mongo` e `redis`.
 
-## Fluxo de leitura
+## Arquivos para começar uma análise
 
-1. cliente envia `chat:read`
-2. `mark_conversation_read()` marca mensagens aplicáveis
-3. `publish_chat_read()` emite atualização para os rooms visíveis
-
-## Fluxo de notificações
-
-1. sistema interno chama `POST /internal/notifications`
-2. o payload é validado
-3. a notificação é persistida
-4. se existir `user_id`, `notification:new` é publicado para `user:{user_id}`
-5. se não existir `user_id`, `notification:new` é publicado para `store:{store_id}`
-
-## Fluxo de transferência de atendimento
-
-1. o PHP transfere o responsável e grava uma nova mensagem `attendance_transfer` em `attendance_messages`
-2. o PHP chama `POST /internal/chat-messages/publish` com o `message_id`
-3. o websocket lê a mensagem persistida, carrega os responsáveis da thread e publica `chat:message`
-4. o PHP chama `POST /internal/notifications` com:
-   - `type = attendance_transfer`
-   - `entity = attendance_thread`
-   - `user_id = novo_responsavel`
-5. o websocket publica a notificação apenas para o usuário de destino
-
-## Arquivos para abrir primeiro
-
-Se outra IA precisar entender o sistema rapidamente, os arquivos mais úteis são:
-
+- `src/socket/server.ts`
 - `src/socket/register_handlers.ts`
-- `src/repositories/chat_repository.ts`
+- `src/socket/handlers/store.ts`
+- `src/socket/handlers/customer.ts`
 - `src/socket/realtime_gateway.ts`
+- `src/redis/runtime.ts`
+- `src/services/sync_cache.ts`
+- `src/services/presence_service.ts`
+- `src/services/customer_rate_limiter.ts`
+- `src/repositories/chat_repository.ts`
+- `src/repositories/ecommerce_chat_repository.ts`
 - `src/contracts/schemas.ts`
-- `src/serializers/realtime.ts`
-- `src/http/app.ts`
 - `src/db/mongo.ts`
-
-## Referência cruzada com o DriveParts PHP
-
-Para a parte HTTP/UI do sistema:
-
-- `/var/www/driveparts-php8.2/docs/ATENDIMENTO_CHAT.md`

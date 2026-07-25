@@ -3,6 +3,8 @@ import { z } from 'zod';
 const lower_snake_case_value = /^[a-z][a-z0-9_]*$/;
 const id_value = z.string().trim().min(1).max(128);
 const optional_id_value = id_value.optional();
+const object_id_value = z.string().trim().regex(/^[a-f0-9]{24}$/i, 'invalid_object_id');
+const optional_object_id_value = object_id_value.optional();
 const non_empty_text = z.string().trim().min(1);
 const chat_attachment_schema = z.object({
   attachment_id: id_value,
@@ -70,9 +72,9 @@ export type SocketWebsiteCustomerJwtPayload = z.infer<typeof socket_website_cust
 
 export const chat_send_schema = z.object({
   recipient_store_id: id_value,
-  attendance_thread_id: optional_id_value,
+  attendance_thread_id: optional_object_id_value,
   client_thread_id: optional_id_value,
-  body: z.string().trim().max(4000).default(''),
+  body: z.string().trim().max(20000).default(''),
   client_message_id: optional_id_value,
   attachments: z.array(chat_attachment_schema).max(5).default([]),
   reference: chat_reference_schema.optional()
@@ -92,9 +94,9 @@ export type ChatSendInput = z.infer<typeof chat_send_schema>;
 
 export const chat_sync_schema = z.object({
   peer_store_id: optional_id_value,
-  attendance_thread_id: optional_id_value,
-  before_message_id: optional_id_value,
-  after_message_id: optional_id_value,
+  attendance_thread_id: optional_object_id_value,
+  before_message_id: optional_object_id_value,
+  after_message_id: optional_object_id_value,
   limit: z.number().int().min(1).max(100).default(50)
 }).strict().superRefine((input, ctx) => {
   if (input.before_message_id && input.after_message_id) {
@@ -109,13 +111,13 @@ export const chat_sync_schema = z.object({
 export type ChatSyncInput = z.infer<typeof chat_sync_schema>;
 
 export const chat_read_schema = z.object({
-  attendance_thread_id: id_value
+  attendance_thread_id: object_id_value
 }).strict();
 
 export type ChatReadInput = z.infer<typeof chat_read_schema>;
 
 export const ecommerce_chat_customer_send_schema = z.object({
-  body: z.string().trim().min(1).max(4000),
+  body: z.string().trim().min(1).max(20000),
   client_message_id: optional_id_value
 }).strict();
 
@@ -135,16 +137,16 @@ export const ecommerce_chat_customer_contact_schema = z.discriminatedUnion('cont
 export type EcommerceChatCustomerContactInput = z.infer<typeof ecommerce_chat_customer_contact_schema>;
 
 export const ecommerce_chat_store_send_schema = z.object({
-  conversation_id: id_value,
-  body: z.string().trim().min(1).max(4000),
+  conversation_id: object_id_value,
+  body: z.string().trim().min(1).max(20000),
   client_message_id: optional_id_value
 }).strict();
 
 export type EcommerceChatStoreSendInput = z.infer<typeof ecommerce_chat_store_send_schema>;
 
 export const ecommerce_chat_customer_sync_schema = z.object({
-  before_message_id: optional_id_value,
-  after_message_id: optional_id_value,
+  before_message_id: optional_object_id_value,
+  after_message_id: optional_object_id_value,
   limit: z.number().int().min(1).max(100).default(50)
 }).strict().superRefine((input, ctx) => {
   if (input.before_message_id && input.after_message_id) {
@@ -159,9 +161,9 @@ export const ecommerce_chat_customer_sync_schema = z.object({
 export type EcommerceChatCustomerSyncInput = z.infer<typeof ecommerce_chat_customer_sync_schema>;
 
 export const ecommerce_chat_store_sync_schema = z.object({
-  conversation_id: id_value,
-  before_message_id: optional_id_value,
-  after_message_id: optional_id_value,
+  conversation_id: object_id_value,
+  before_message_id: optional_object_id_value,
+  after_message_id: optional_object_id_value,
   limit: z.number().int().min(1).max(100).default(50)
 }).strict().superRefine((input, ctx) => {
   if (input.before_message_id && input.after_message_id) {
@@ -182,13 +184,13 @@ export const ecommerce_chat_conversations_schema = z.object({
 export type EcommerceChatConversationsInput = z.infer<typeof ecommerce_chat_conversations_schema>;
 
 export const ecommerce_chat_store_read_schema = z.object({
-  conversation_id: id_value
+  conversation_id: object_id_value
 }).strict();
 
 export const ecommerce_chat_customer_read_schema = z.object({}).strict();
 
 export const notification_sync_schema = z.object({
-  after_notification_id: optional_id_value,
+  after_notification_id: optional_object_id_value,
   unread_only: z.boolean().default(false),
   limit: z.number().int().min(1).max(100).default(50)
 }).strict();
@@ -196,7 +198,7 @@ export const notification_sync_schema = z.object({
 export type NotificationSyncInput = z.infer<typeof notification_sync_schema>;
 
 export const notification_read_schema = z.object({
-  notification_id: id_value
+  notification_id: object_id_value
 }).strict();
 
 export type NotificationReadInput = z.infer<typeof notification_read_schema>;
@@ -228,7 +230,7 @@ export const internal_notification_schema = z.object({
 export type InternalNotificationInput = z.infer<typeof internal_notification_schema>;
 
 export const internal_chat_message_schema = z.object({
-  message_id: id_value
+  message_id: object_id_value
 }).strict();
 
 export type InternalChatMessageInput = z.infer<typeof internal_chat_message_schema>;

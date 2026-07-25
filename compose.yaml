@@ -9,21 +9,47 @@ services:
     restart: unless-stopped
     ports:
       - 3010:3010
+    extra_hosts:
+      - host.docker.internal:host-gateway
     environment:
       TZ: America/Sao_Paulo
       NODE_ENV: production
       PORT: "3010"
       LOG_LEVEL: info
       SOCKET_PATH: /socket.io
+      SOCKET_CONNECTION_RECOVERY_SECONDS: "0"
+      SOCKET_MAX_HTTP_BUFFER_SIZE_BYTES: "65536"
+      SOCKET_MAX_IN_FLIGHT_EVENTS: "8"
+      SOCKET_ENFORCE_PERMISSIONS: "false"
+      ALLOW_LEGACY_STORE_ID_MASTER_ROLE: "false"
       MAX_CHAT_MESSAGE_LENGTH: "4000"
       CORS_ORIGINS: https://driveparts.com.br,https://www.driveparts.com.br,https://mercadodrive.com.br,https://www.mercadodrive.com.br,https://mercadodrivehomologacao.saken2.virtuaserver.com.br
       MONGODB_DB: driveparts
-      MONGODB_URL: mongodb://driveparts:${MONGODB_PASSWORD}@186.226.61.22
-      REDIS_URL: redis://172.17.0.1:6379
+      MONGODB_TRANSACTIONS_ENABLED: "true"
+      # URL completa tem precedência; o fallback preserva o ambiente legado atual.
+      MONGODB_URL: "${MONGODB_URL:-mongodb://driveparts:${MONGODB_PASSWORD:-}@186.226.61.22}"
+      REDIS_URL: "${REDIS_URL:-redis://172.17.0.1:6379}"
+      REDIS_KEY_PREFIX: driveparts:websocket:production:v1
+      REDIS_SYNC_CACHE_TIME_TO_LIVE_SECONDS: "15"
+      REDIS_SOCKET_PRESENCE_TIME_TO_LIVE_SECONDS: "90"
+      PRESENCE_PERSIST_INTERVAL_SECONDS: "15"
+      ECOMMERCE_CUSTOMER_RATE_LIMIT_MAX: "10"
+      ECOMMERCE_CUSTOMER_RATE_LIMIT_WINDOW_SECONDS: "60"
       DRIVEPARTS_INTERNAL_TOKEN: ${DRIVEPARTS_INTERNAL_TOKEN}
       WEBSOCKET_JWT_SECRET: ${WEBSOCKET_JWT_SECRET}
     networks:
       - internal_services
+    init: true
+    stop_grace_period: 20s
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+    logging:
+      options:
+        max-size: 10m
+        max-file: "3"
 networks:
   internal_services:
     external: true

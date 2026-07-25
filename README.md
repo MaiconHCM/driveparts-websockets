@@ -2,7 +2,7 @@
 
 Serviço Node.js responsável pelo realtime do DriveParts.
 
-Atualizado em 2026-05-28.
+Atualizado em 2026-07-25.
 
 ## Escopo atual
 
@@ -27,7 +27,7 @@ de `store_id`, `visitor_id` e `inventory_item_id`.
 - Express
 - Socket.IO
 - MongoDB
-- Redis opcional para múltiplas instâncias Socket.IO
+- Redis Streams para fan-out entre instâncias, presença, cache curto e rate limit
 
 ## Rotas HTTP
 
@@ -37,6 +37,9 @@ de `store_id`, `visitor_id` e `inventory_item_id`.
 - `POST /internal/chat-messages/publish`
 
 As rotas internas exigem `x-internal-token` e validam chaves em `snake_case`.
+Durante o encerramento, rotas não-health retornam `503` antes de autenticação,
+parsing ou persistência; `/health/live` permanece ativo e `/health/ready` retorna
+`503` com `status=shutting_down`.
 
 ## Eventos Socket.IO
 
@@ -67,7 +70,33 @@ Emitidos:
 - `notification:read`
 - `presence:update`
 
-## Coleções MongoDB
+### Bootstrap, listeners e entrega
+
+Registre todos os listeners antes de chamar `connect()` no cliente. Em uma conexão
+nova, o servidor emite primeiro os snapshots disponíveis (`chat:sync`,
+`notification:sync`, `ecommerce_chat:sync` e `ecommerce_chat:presence`) e somente
+depois emite `connection:ready`. Os handlers de entrada já ficam instalados durante
+o bootstrap, mas respondem `not_ready` até esse evento.
+
+O consumidor deve tratar a entrega realtime como **at-least-once**: uma reconexão,
+retry ou republicação pode repetir um evento. Faça deduplicação pelos IDs persistidos
+(`message_id` e `notification_id`) e envie `client_message_id` estável nos retries.
+Notificações internas aceitam `idempotency_key`; idempotência de persistência não
+dispensa deduplicação na interface.
+
+### Rooms e handlers
+
+As rooms são separadas por domínio e loja (`store`, `chat_user`,
+`notification_user`, `store_chat_attendant`, `ecommerce_store_attendant`,
+`ecommerce_customer`, `ecommerce_presence` e `store_presence_listener`). Cada
+componente dinâmico, inclusive `store_id`, é codificado em base64url; clientes não
+devem montar nem entrar nessas rooms diretamente.
+
+O registro Socket.IO apenas direciona a conexão autenticada. Os fluxos de loja e
+visitante ficam em handlers separados, com validação, ACK, limite de trabalho em
+voo, erros e drain compartilhados; publicação e seleção de rooms ficam no gateway.
+
+## MongoDB, índices e consistência
 
 - `attendance_threads`
 - `attendance_messages`
@@ -76,6 +105,21 @@ Emitidos:
 - `ecommerce_messages`
 - `websocket_notifications`
 - `store_presence`
+
+Os índices são garantidos na inicialização (ou por `npm run create-indexes`). Entre
+os índices atuais estão:
+
+- unicidade de thread e de `client_thread_id` no chat entre lojas;
+- paginação, não lidas e idempotência por `sender_store_id + client_message_id`;
+- conversa de e-commerce única por `channel + store_id + visitor_id`, listagem por
+  última mensagem e mensagens por conversa, leitura e `idempotency_key`;
+- notificações por loja/usuário, cursores de leitura e
+  `store_id + idempotency_key`;
+- uma presença por `store_id`, com busca por `last_seen_at`.
+
+`MONGODB_TRANSACTIONS_ENABLED=true` usa transações nas gravações compostas de chat
+e e-commerce e exige MongoDB em replica set ou cluster compatível. Defina `false`
+em Mongo standalone; por isso o `compose.internal.yaml` desativa a opção.
 
 ## Execução
 
@@ -109,9 +153,16 @@ Compose reconstruí-la a partir do código local ao subir o stack.
 git clone https://github.com/MaiconHCM/driveparts-websockets.git
 cd driveparts-websockets
 cp .env.example .env
-# preencha os segredos; defina NODE_ENV=production e CORS_ORIGINS
+# preencha MONGODB_URL, DRIVEPARTS_INTERNAL_TOKEN e WEBSOCKET_JWT_SECRET;
+# defina também NODE_ENV=production e CORS_ORIGINS
 docker compose up -d --build
 ```
+
+Nos composes com MongoDB externo, prefira `MONGODB_URL` completa. Para preservar
+a stack já instalada, se `MONGODB_URL` estiver vazia ou ausente, o compose mantém
+o endpoint atual e usa `MONGODB_PASSWORD`. Se as duas forem definidas,
+`MONGODB_URL` tem precedência. As credenciais permanecem somente no `.env`, e
+caracteres especiais de usuário/senha devem estar codificados para URL.
 
 ### Atualizar na VPS
 
@@ -121,9 +172,9 @@ docker compose up -d --build
 docker compose logs -f
 ```
 
-No Dockge, a ação de pull apenas ignora a imagem local. Antes de recriar o stack
-com código novo, atualize o checkout com `git pull --ff-only`; o Dockge não atualiza
-repositórios Git automaticamente.
+No compose local deste repositório, atualize o checkout com `git pull --ff-only`.
+O stack de produção do Dockge usa o contexto Git remoto; nele, a ação **Update**
+busca `main`, reconstrói a imagem e recria o serviço.
 
 O serviço sobe na porta `PORT` (padrão `3010`), exposta direto no host.
 O TLS / reverse proxy (nginx, Cloudflare) fica por fora do compose.
@@ -139,7 +190,8 @@ docker compose -f compose.internal.yaml up -d
 
 - O `MONGODB_URL` é montado pelo compose a partir de `MONGO_ROOT_USER`/`MONGO_ROOT_PASSWORD`
   (não precisa definir `MONGODB_URL` no `.env` aqui).
-- Os dados do Mongo ficam no volume `mongo_data`. O Redis é só pub/sub (sem persistência).
+- Os dados permanentes ficam no Mongo. O Redis guarda apenas estado operacional com
+  expiração ou limite de tamanho, sem ser fonte durável.
 - `mongo`/`redis` não são expostos no host; o websocket espera ambos ficarem `healthy`.
 - **Produção com dados compartilhados**: este Mongo começa vazio e isolado. Se o app PHP
   lê/grava as mesmas collections, aponte o websocket para o Mongo do PHP usando o
@@ -148,12 +200,56 @@ docker compose -f compose.internal.yaml up -d
 Notas:
 
 - Dentro do container, `127.0.0.1` é o próprio container. Para alcançar Mongo/Redis
-  instalados no host do VPS, use `host.docker.internal` no `.env` (o compose já mapeia
-  `host.docker.internal` → `host-gateway`).
-- O `.env` precisa conter ao menos `MONGODB_URL`, `DRIVEPARTS_INTERNAL_TOKEN` e
-  `WEBSOCKET_JWT_SECRET`; sem eles o serviço falha na validação de schema ao subir.
-- O healthcheck do container bate em `GET /health/live`.
-- Para múltiplas instâncias, defina `REDIS_URL` apontando para um Redis acessível.
+  instalados no host do VPS, o `compose.yaml` atual mapeia
+  `host.docker.internal` → `host-gateway`. O `compose.internal.yaml` usa os nomes
+  `mongo` e `redis` da própria rede e não cria esse alias.
+- Nos composes com serviços externos, `REDIS_URL` pode ser sobrescrita no `.env`;
+  sem override, permanece `redis://172.17.0.1:6379`.
+- Nos composes externos, o `.env` precisa conter `MONGODB_URL` ou, para
+  compatibilidade com a stack atual, `MONGODB_PASSWORD`. Também são obrigatórios
+  `DRIVEPARTS_INTERNAL_TOKEN` e `WEBSOCKET_JWT_SECRET`.
+- O healthcheck do container bate em `GET /health/ready`.
+- Para múltiplas instâncias, defina `REDIS_URL`, use afinidade de sessão no proxy
+  enquanto o transporte polling estiver habilitado e mantenha um prefixo exclusivo.
+
+## Redis e resiliência
+
+- O adapter Redis Streams distribui eventos entre instâncias e retoma o consumo
+  após indisponibilidades temporárias.
+- O stream do adapter usa `MAXLEN=10000`; stream entries não possuem TTL. Chaves de
+  presença, cache, rate limit e, quando habilitada, sessão recuperável têm expiração
+  própria.
+- A presença usa membros por socket com heartbeat e TTL; um processo encerrado à
+  força deixa de aparecer online sem depender de cleanup manual.
+- Snapshots iniciais usam cache de poucos segundos com versões de invalidação. MongoDB
+  continua sendo consultado quando o Redis está indisponível.
+- O rate limit do visitante é compartilhado entre instâncias e atômico no Redis.
+  Quando um Redis configurado não confirma a operação, a requisição falha de
+  forma segura e retryable; o fallback local só é usado quando `REDIS_URL` não
+  foi configurada.
+- Com `REDIS_URL`, `/health/ready` valida MongoDB e faz `PING` nos dois clientes
+  Redis (adapter e comandos); qualquer falha retorna `503`. Sem Redis configurado,
+  ele valida apenas MongoDB. `/health/live` apenas confirma o processo.
+
+`SOCKET_CONNECTION_RECOVERY_SECONDS=0` mantém a recuperação de estado do Socket.IO
+desativada por padrão. Isso evita misturar replay parcial com os snapshots do
+bootstrap — especialmente porque presença é `volatile`. Habilite-a somente após
+validar reconciliação e deduplicação no cliente.
+
+As chaves usam `REDIS_KEY_PREFIX`. Em Redis compartilhado, prefira ACL/credencial
+dedicada e nunca exponha a porta a redes não confiáveis.
+
+## Autorização e compatibilidade
+
+- `SOCKET_ENFORCE_PERMISSIONS=false` preserva clientes atuais e faz as permissões
+  declaradas no JWT não restringirem eventos ou rooms. Ative somente depois de PHP
+  e MercadoDrive emitirem todas as permissões de chat, e-commerce, notificações e
+  presença.
+- `ALLOW_LEGACY_STORE_ID_MASTER_ROLE=false` mantém desligado o fallback que trata
+  `user_id === store_id` como `master` quando o JWT antigo não traz `user_role`.
+  O padrão e os composes versionados permanecem `false`; a stack ativa do Dockge
+  usa temporariamente `true` porque esse formato legado ainda aparece nos logs.
+  Remova o fallback assim que os emissores enviarem `user_role`.
 
 ## Documentação detalhada
 

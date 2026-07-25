@@ -14,13 +14,16 @@ export class PresenceRepository {
   }
 
   async mark_seen(store_id: string, last_seen_at = new Date()): Promise<StorePresenceDocument> {
+    const updated_at = new Date();
     const result = await this.presence.findOneAndUpdate(
       { store_id },
       {
         $set: {
           store_id,
-          last_seen_at,
-          updated_at: last_seen_at
+          updated_at
+        },
+        $max: {
+          last_seen_at
         }
       },
       {

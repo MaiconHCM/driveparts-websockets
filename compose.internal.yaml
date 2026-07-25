@@ -32,7 +32,7 @@ services:
     image: redis:7-alpine
     container_name: driveparts-redis
     restart: unless-stopped
-    # Sem persistência: o Redis aqui é só pub/sub do adapter do Socket.IO.
+    # Sem persistência: apenas stream/sessões, presença, cache e rate limit operacionais.
     command: ["redis-server", "--save", "", "--appendonly", "no"]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -63,19 +63,42 @@ services:
       PORT: "${PORT:-3010}"
       LOG_LEVEL: "${LOG_LEVEL:-info}"
       MONGODB_DB: "${MONGODB_DB:-driveparts}"
+      MONGODB_TRANSACTIONS_ENABLED: "false"
       MONGODB_URL: "mongodb://${MONGO_ROOT_USER:-driveparts}:${MONGO_ROOT_PASSWORD:?defina MONGO_ROOT_PASSWORD no .env}@mongo:27017/${MONGODB_DB:-driveparts}?authSource=admin"
       REDIS_URL: "redis://redis:6379"
+      REDIS_KEY_PREFIX: "${REDIS_KEY_PREFIX:-driveparts:websocket:production:v1}"
+      REDIS_SYNC_CACHE_TIME_TO_LIVE_SECONDS: "${REDIS_SYNC_CACHE_TIME_TO_LIVE_SECONDS:-15}"
+      REDIS_SOCKET_PRESENCE_TIME_TO_LIVE_SECONDS: "${REDIS_SOCKET_PRESENCE_TIME_TO_LIVE_SECONDS:-90}"
+      PRESENCE_PERSIST_INTERVAL_SECONDS: "${PRESENCE_PERSIST_INTERVAL_SECONDS:-15}"
       CORS_ORIGINS: "${CORS_ORIGINS:-http://localhost:8000,http://127.0.0.1:8000}"
       SOCKET_PATH: "${SOCKET_PATH:-/socket.io}"
+      SOCKET_CONNECTION_RECOVERY_SECONDS: "${SOCKET_CONNECTION_RECOVERY_SECONDS:-0}"
+      SOCKET_MAX_HTTP_BUFFER_SIZE_BYTES: "${SOCKET_MAX_HTTP_BUFFER_SIZE_BYTES:-65536}"
+      SOCKET_MAX_IN_FLIGHT_EVENTS: "${SOCKET_MAX_IN_FLIGHT_EVENTS:-8}"
+      SOCKET_ENFORCE_PERMISSIONS: "${SOCKET_ENFORCE_PERMISSIONS:-false}"
+      ALLOW_LEGACY_STORE_ID_MASTER_ROLE: "${ALLOW_LEGACY_STORE_ID_MASTER_ROLE:-false}"
+      ECOMMERCE_CUSTOMER_RATE_LIMIT_MAX: "${ECOMMERCE_CUSTOMER_RATE_LIMIT_MAX:-10}"
+      ECOMMERCE_CUSTOMER_RATE_LIMIT_WINDOW_SECONDS: "${ECOMMERCE_CUSTOMER_RATE_LIMIT_WINDOW_SECONDS:-60}"
       MAX_CHAT_MESSAGE_LENGTH: "${MAX_CHAT_MESSAGE_LENGTH:-4000}"
       DRIVEPARTS_INTERNAL_TOKEN: "${DRIVEPARTS_INTERNAL_TOKEN:?defina DRIVEPARTS_INTERNAL_TOKEN no .env}"
       WEBSOCKET_JWT_SECRET: "${WEBSOCKET_JWT_SECRET:?defina WEBSOCKET_JWT_SECRET no .env}"
+    init: true
+    stop_grace_period: 20s
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+    logging:
+      options:
+        max-size: 10m
+        max-file: "3"
     healthcheck:
       test:
         - CMD
         - node
         - -e
-        - "const p=process.env.PORT||3010;require('http').get('http://127.0.0.1:'+p+'/health/live',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"
+        - "const p=process.env.PORT||3010;require('http').get('http://127.0.0.1:'+p+'/health/ready',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"
       interval: 30s
       timeout: 5s
       start_period: 20s

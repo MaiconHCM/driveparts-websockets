@@ -66,13 +66,19 @@ describe('realtime contracts', () => {
   it('accepts chat sync payload with conversation pagination keys', () => {
     const payload = chat_sync_schema.parse({
       peer_store_id: 'store_2',
-      before_message_id: 'message_10',
+      before_message_id: '66a3b5688f9c5ee8d8f92a10',
       limit: 10
     });
 
     expect(payload.peer_store_id).toBe('store_2');
-    expect(payload.before_message_id).toBe('message_10');
+    expect(payload.before_message_id).toBe('66a3b5688f9c5ee8d8f92a10');
     expect(payload.limit).toBe(10);
+  });
+
+  it('rejects malformed MongoDB cursors instead of silently restarting pagination', () => {
+    expect(() => chat_sync_schema.parse({
+      before_message_id: 'message_10'
+    })).toThrow();
   });
 
   it('accepts listing notification payload', () => {
@@ -147,13 +153,13 @@ describe('realtime contracts', () => {
       client_message_id: 'customer_message_1'
     });
     const store_payload = ecommerce_chat_store_send_schema.parse({
-      conversation_id: 'conversation_1',
+      conversation_id: '66a3b5688f9c5ee8d8f92a11',
       body: 'Sim, está disponível.',
       client_message_id: 'store_message_1'
     });
 
     expect(customer_payload.body).toContain('disponível');
-    expect(store_payload.conversation_id).toBe('conversation_1');
+    expect(store_payload.conversation_id).toBe('66a3b5688f9c5ee8d8f92a11');
     expect(() => ecommerce_chat_customer_send_schema.parse({
       conversation_id: 'forged_conversation',
       body: 'teste'

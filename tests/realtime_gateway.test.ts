@@ -1,7 +1,8 @@
 import type { Server } from 'socket.io';
 import { ObjectId } from 'mongodb';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { serialize_ecommerce_customer_conversation } from '../src/serializers/realtime.js';
+import type { SyncCache } from '../src/services/sync_cache.js';
 import { RealtimeGateway } from '../src/socket/realtime_gateway.js';
 
 describe('ecommerce realtime isolation', () => {
@@ -9,14 +10,18 @@ describe('ecommerce realtime isolation', () => {
     const emissions: Array<{ rooms: string[]; event_name: string; payload: unknown }> = [];
     const io = {
       to(rooms: string[]) {
-        return {
+        const operator = {
           emit(event_name: string, payload: unknown) {
             emissions.push({ rooms, event_name, payload });
+          },
+          get volatile() {
+            return operator;
           }
         };
+        return operator;
       }
     } as unknown as Server;
-    const gateway = new RealtimeGateway(io);
+    const gateway = new RealtimeGateway(io, create_sync_cache());
 
     gateway.publish_store_presence({
       store_id: 'store_1',
@@ -24,7 +29,10 @@ describe('ecommerce realtime isolation', () => {
     });
 
     expect(emissions).toEqual([{
-      rooms: ['store_presence_listener', 'ecommerce_presence:store_1'],
+      rooms: [
+        expected_room('store_presence_listener', 'store_1'),
+        expected_room('ecommerce_presence', 'store_1')
+      ],
       event_name: 'presence:update',
       payload: {
         store_id: 'store_1',
@@ -33,15 +41,15 @@ describe('ecommerce realtime isolation', () => {
     }]);
   });
 
-  it('keeps the anonymous message quota across socket reconnections', () => {
-    const gateway = new RealtimeGateway({} as Server);
+  it('encodes room components so delimiter characters cannot collide', () => {
+    const gateway = new RealtimeGateway({} as Server, create_sync_cache());
 
-    for (let attempt = 0; attempt < 10; attempt += 1) {
-      expect(gateway.consume_ecommerce_customer_message_quota('store_1', 'visitor_1')).toBe(true);
-    }
-
-    expect(gateway.consume_ecommerce_customer_message_quota('store_1', 'visitor_1')).toBe(false);
-    expect(gateway.consume_ecommerce_customer_message_quota('store_1', 'visitor_2')).toBe(true);
+    expect(gateway.join_ecommerce_customer_room('store:a', 'visitor'))
+      .not.toBe(gateway.join_ecommerce_customer_room('store', 'a:visitor'));
+    expect(gateway.join_chat_user_room('store_1', 'same_user'))
+      .not.toBe(gateway.join_chat_user_room('store_2', 'same_user'));
+    expect(gateway.join_chat_user_room('store_1', 'same_user'))
+      .not.toBe(gateway.join_notification_user_room('store_1', 'same_user'));
   });
 
   it('does not expose internal attendant data in the customer conversation payload', () => {
@@ -81,7 +89,7 @@ describe('ecommerce realtime isolation', () => {
     });
   });
 
-  it('publishes customer contact only to the conversation store and customer rooms', () => {
+  it('publishes customer contact only to the conversation store and customer rooms', async () => {
     const emissions: Array<{ rooms: string[]; event_name: string; payload: unknown }> = [];
     const io = {
       to(rooms: string[]) {
@@ -92,10 +100,11 @@ describe('ecommerce realtime isolation', () => {
         };
       }
     } as unknown as Server;
-    const gateway = new RealtimeGateway(io);
+    const sync_cache = create_sync_cache();
+    const gateway = new RealtimeGateway(io, sync_cache);
     const conversation_id = new ObjectId();
 
-    gateway.publish_ecommerce_contact({
+    await gateway.publish_ecommerce_contact({
       _id: conversation_id,
       conversation_key: 'e_commerce:store_1:visitor_1',
       channel: 'e_commerce',
@@ -119,9 +128,9 @@ describe('ecommerce realtime isolation', () => {
 
     expect(emissions).toEqual([{
       rooms: [
-        'store_attendant:store_1:master',
-        'store_attendant:store_1:seller',
-        'ecommerce_customer:store_1:visitor_1'
+        expected_room('ecommerce_store_attendant', 'store_1', 'master'),
+        expected_room('ecommerce_store_attendant', 'store_1', 'seller'),
+        expected_room('ecommerce_customer', 'store_1', 'visitor_1')
       ],
       event_name: 'ecommerce_chat:contact',
       payload: {
@@ -131,5 +140,18 @@ describe('ecommerce realtime isolation', () => {
         customer_contact_updated_at: '2026-07-25T12:00:00.000Z'
       }
     }]);
+    expect(sync_cache.invalidate_ecommerce).toHaveBeenCalledWith('store_1', 'visitor_1');
   });
 });
+
+function create_sync_cache(): SyncCache {
+  return {
+    invalidate_chat: vi.fn(async () => undefined),
+    invalidate_notification: vi.fn(async () => undefined),
+    invalidate_ecommerce: vi.fn(async () => undefined)
+  } as unknown as SyncCache;
+}
+
+function expected_room(kind: string, ...parts: string[]): string {
+  return [kind, ...parts.map((part) => Buffer.from(part).toString('base64url'))].join(':');
+}

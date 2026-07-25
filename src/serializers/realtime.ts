@@ -125,6 +125,17 @@ export function serialize_ecommerce_customer_conversation(conversation: Ecommerc
   };
 }
 
+export function serialize_ecommerce_customer_contact(conversation: EcommerceConversationDocument) {
+  return {
+    conversation_id: conversation._id.toHexString(),
+    ...(conversation.customer_email ? { customer_email: conversation.customer_email } : {}),
+    ...(conversation.customer_phone ? { customer_phone: conversation.customer_phone } : {}),
+    ...(conversation.customer_contact_updated_at ? {
+      customer_contact_updated_at: conversation.customer_contact_updated_at.toISOString()
+    } : {})
+  };
+}
+
 export function serialize_ecommerce_message(message: EcommerceMessageDocument) {
   return {
     message_id: message._id.toHexString(),

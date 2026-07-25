@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from 'node:util';
 import { Collection, Db, Filter, ObjectId } from 'mongodb';
 import type { InternalNotificationInput } from '../contracts/schemas.js';
 
@@ -20,6 +21,18 @@ export type NotificationDocument = {
   external_listing_id?: string;
   data?: Record<string, unknown>;
   read_at?: Date;
+};
+
+export class NotificationIdempotencyConflictError extends Error {
+  constructor() {
+    super('notification_idempotency_conflict');
+    this.name = 'NotificationIdempotencyConflictError';
+  }
+}
+
+export type NotificationReadResult = {
+  notification: NotificationDocument | null;
+  changed: boolean;
 };
 
 type ListNotificationsInput = {
@@ -45,7 +58,7 @@ export class NotificationRepository {
       });
 
       if (existing_notification) {
-        return existing_notification;
+        return validate_idempotent_notification(existing_notification, input);
       }
     }
 
@@ -80,7 +93,7 @@ export class NotificationRepository {
         });
 
         if (existing_notification) {
-          return existing_notification;
+          return validate_idempotent_notification(existing_notification, input);
         }
       }
 
@@ -117,20 +130,42 @@ export class NotificationRepository {
     return latest.reverse();
   }
 
-  async mark_read(store_id: string, user_id: string, notification_id: string): Promise<NotificationDocument | null> {
+  async mark_read(
+    store_id: string,
+    user_id: string,
+    notification_id: string
+  ): Promise<NotificationReadResult> {
     if (!ObjectId.isValid(notification_id)) {
-      return null;
+      return {
+        notification: null,
+        changed: false
+      };
     }
 
-    return this.notifications.findOneAndUpdate(
+    const filter: Filter<NotificationDocument> = {
+      _id: new ObjectId(notification_id),
+      store_id,
+      $or: build_notification_visibility_conditions(user_id)
+    };
+    const updated = await this.notifications.findOneAndUpdate(
       {
-        _id: new ObjectId(notification_id),
-        store_id,
-        $or: build_notification_visibility_conditions(user_id)
+        ...filter,
+        read_at: { $exists: false }
       },
       { $set: { read_at: new Date() } },
       { returnDocument: 'after' }
     );
+    if (updated) {
+      return {
+        notification: updated,
+        changed: true
+      };
+    }
+
+    return {
+      notification: await this.notifications.findOne(filter),
+      changed: false
+    };
   }
 }
 
@@ -152,4 +187,30 @@ function is_duplicate_key_error(error: unknown): boolean {
     && error !== null
     && 'code' in error
     && (error as { code?: number }).code === 11000;
+}
+
+function validate_idempotent_notification(
+  notification: NotificationDocument,
+  input: InternalNotificationInput
+): NotificationDocument {
+  const matches = notification.store_id === input.store_id
+    && notification.user_id === input.user_id
+    && notification.type === input.type
+    && notification.severity === input.severity
+    && notification.source === input.source
+    && notification.entity === input.entity
+    && notification.title === input.title
+    && notification.message === input.message
+    && notification.channel === input.channel
+    && notification.listing_id === input.listing_id
+    && notification.integration_id === input.integration_id
+    && notification.inventory_item_id === input.inventory_item_id
+    && notification.external_listing_id === input.external_listing_id
+    && isDeepStrictEqual(notification.data, input.data);
+
+  if (!matches) {
+    throw new NotificationIdempotencyConflictError();
+  }
+
+  return notification;
 }

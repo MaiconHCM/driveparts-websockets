@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.build.json",
     "check": "tsc --noEmit -p tsconfig.json",
     "dev": "tsx watch src/index.ts",
     "start": "node dist/src/index.js",
@@ -12,7 +12,7 @@
     "create-indexes": "tsx scripts/create_indexes.ts"
   },
   "dependencies": {
-    "@socket.io/redis-adapter": "^8.3.0",
+    "@socket.io/redis-streams-adapter": "^0.3.1",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
