@@ -162,7 +162,8 @@ O cliente deve instalar os listeners antes de conectar.
 1. Indexe os vínculos por `inventory_item_integration_id`; mantenha também a
    chave composta `store_id + integration_id + inventory_item_id + channel`.
 2. Deduplicate eventos por `publication_result_id` ou `idempotency_key` usando
-   um conjunto com limite/expiração. A entrega é at-least-once.
+   um conjunto com limite/expiração. A entrega pode se repetir em uma retomada
+   ambígua e não deve ser tratada como exactly-once.
 3. Para o vínculo visível ainda em `processing`, aplique o snapshot sanitizado
    imediatamente. Se já houver outra `execution_id`, uma versão local mais nova
    ou campos adicionais forem necessários, refaça somente a consulta desse
