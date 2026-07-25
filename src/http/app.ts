@@ -7,14 +7,29 @@ import { ZodError } from 'zod';
 import type { Db } from 'mongodb';
 import type { AppConfig } from '../config/app_config.js';
 import type { AppLogger } from '../config/logger.js';
-import { internal_chat_message_schema, internal_notification_schema } from '../contracts/schemas.js';
+import {
+  internal_chat_message_schema,
+  internal_notification_schema,
+  internal_publication_result_schema,
+  type InternalNotificationInput,
+  type InternalPublicationResultInput
+} from '../contracts/schemas.js';
 import type { ChatRepository } from '../repositories/chat_repository.js';
 import {
   NotificationIdempotencyConflictError,
+  type NotificationDocument,
   type NotificationRepository
 } from '../repositories/notification_repository.js';
+import {
+  PublicationResultIdempotencyConflictError,
+  type InventoryItemIntegrationSnapshot,
+  type PublicationResultRepository
+} from '../repositories/publication_result_repository.js';
 import { serialize_chat_message, serialize_notification } from '../serializers/realtime.js';
-import type { RealtimeGateway } from '../socket/realtime_gateway.js';
+import type {
+  PublicationResultEvent,
+  RealtimeGateway
+} from '../socket/realtime_gateway.js';
 import type { RedisHealth } from '../redis/runtime.js';
 import { assert_payload_keys_are_snake_case } from '../utils/snake_case.js';
 import { require_internal_token } from './internal_auth.js';
@@ -25,6 +40,7 @@ type AppDependencies = {
   db: Db;
   chat_repository: ChatRepository;
   notification_repository: NotificationRepository;
+  publication_result_repository: PublicationResultRepository;
   realtime_gateway: RealtimeGateway;
   redis_health?: () => Promise<RedisHealth>;
   is_shutting_down?: () => boolean;
@@ -158,6 +174,111 @@ export function create_http_app(deps: AppDependencies) {
   );
 
   app.post(
+    '/internal/publication-results',
+    require_internal_token(deps.config),
+    async (request, response, next) => {
+      let claimed_input: InternalPublicationResultInput | undefined;
+      let claim_id: string | undefined;
+      try {
+        assert_payload_keys_are_snake_case(request.body);
+        const input = internal_publication_result_schema.parse(request.body);
+        const resolution = await deps.publication_result_repository.resolve(input);
+
+        if (resolution.kind === 'retry') {
+          response
+            .status(425)
+            .setHeader('retry-after', '1')
+            .json({
+              ok: false,
+              error: {
+                code: 'publication_result_not_ready',
+                message: resolution.reason,
+                retryable: true,
+                retry_after_seconds: 1
+              }
+            });
+          return;
+        }
+
+        if (resolution.kind === 'suppressed') {
+          response.status(202).json({
+            ok: true,
+            suppressed: true,
+            reason: resolution.reason
+          });
+          return;
+        }
+
+        const publication_result = build_publication_result(input, resolution.snapshot);
+        const claim = await deps.publication_result_repository.claim(input);
+        if (claim.kind === 'busy') {
+          response
+            .status(425)
+            .setHeader('retry-after', '1')
+            .json({
+              ok: false,
+              error: {
+                code: 'publication_result_in_flight',
+                message: 'publication_result_delivery_in_flight',
+                retryable: true,
+                retry_after_seconds: 1
+              }
+            });
+          return;
+        }
+        if (claim.kind === 'duplicate') {
+          response.status(202).json({
+            ok: true,
+            suppressed: true,
+            reason: 'duplicate_publication_result'
+          });
+          return;
+        }
+        claimed_input = input;
+        claim_id = claim.claim_id;
+
+        const notification = resolution.snapshot.status === 'error'
+          ? await deps.notification_repository.create_notification(
+            build_publication_error_notification(input, resolution.snapshot)
+          )
+          : undefined;
+
+        deps.realtime_gateway.publish_publication_result(publication_result);
+        if (notification) {
+          await deps.realtime_gateway.publish_notification(notification);
+        }
+        const marked_published = await deps.publication_result_repository.mark_published(
+          input,
+          claim.claim_id
+        );
+        if (!marked_published) {
+          throw new Error('publication_result_receipt_lost');
+        }
+        claim_id = undefined;
+
+        response.status(202).json({
+          ok: true,
+          suppressed: false,
+          publication_result,
+          ...(notification ? { notification: serialize_notification(notification) } : {})
+        });
+      } catch (error) {
+        if (claimed_input && claim_id) {
+          try {
+            await deps.publication_result_repository.release(claimed_input, claim_id);
+          } catch (release_error) {
+            deps.logger.error({
+              err: release_error,
+              idempotency_key: claimed_input.idempotency_key
+            }, 'publication_result_receipt_release_failed');
+          }
+        }
+        next(error);
+      }
+    }
+  );
+
+  app.post(
     '/internal/chat-messages/publish',
     require_internal_token(deps.config),
     async (request, response, next) => {
@@ -204,6 +325,82 @@ export function create_http_app(deps: AppDependencies) {
   return app;
 }
 
+function build_publication_result(
+  input: InternalPublicationResultInput,
+  snapshot: InventoryItemIntegrationSnapshot
+): PublicationResultEvent {
+  return {
+    schema_version: 1,
+    publication_result_id: input.idempotency_key,
+    idempotency_key: input.idempotency_key,
+    event_id: input.event_id,
+    delivery_id: input.delivery_id,
+    store_id: snapshot.store_id,
+    inventory_item_integration_id: snapshot.inventory_item_integration_id,
+    integration_id: snapshot.integration_id,
+    inventory_item_id: snapshot.inventory_item_id,
+    channel: snapshot.channel,
+    status: snapshot.status,
+    execution_id: snapshot.execution_id,
+    attempt: input.attempt,
+    finished_at: input.finished_at,
+    ...(input.operation ? { operation: input.operation } : {}),
+    ...(input.external_listing_id ? {
+      external_listing_id: input.external_listing_id
+    } : {}),
+    inventory_item_integration: snapshot
+  };
+}
+
+function build_publication_error_notification(
+  input: InternalPublicationResultInput,
+  snapshot: InventoryItemIntegrationSnapshot
+): InternalNotificationInput {
+  const message = snapshot.error?.message ?? 'Não foi possível concluir a publicação do anúncio.';
+
+  return {
+    idempotency_key: input.idempotency_key,
+    store_id: snapshot.store_id,
+    type: 'listing_error',
+    severity: 'error',
+    source: notification_source(snapshot.channel),
+    entity: 'integration',
+    title: 'Falha ao publicar anúncio',
+    message,
+    channel: snapshot.channel,
+    integration_id: snapshot.integration_id,
+    inventory_item_id: snapshot.inventory_item_id,
+    ...(input.external_listing_id ? {
+      external_listing_id: input.external_listing_id
+    } : {}),
+    data: {
+      schema_version: 1,
+      publication_result_id: input.idempotency_key,
+      inventory_item_integration_id: snapshot.inventory_item_integration_id,
+      event_id: input.event_id,
+      delivery_id: input.delivery_id,
+      status: snapshot.status,
+      execution_id: snapshot.execution_id,
+      attempt: input.attempt,
+      finished_at: input.finished_at,
+      ...(input.operation ? { operation: input.operation } : {})
+    }
+  };
+}
+
+function notification_source(channel: string): NotificationDocument['source'] {
+  switch (channel) {
+    case 'mercado_libre_brasil':
+      return 'mercado_livre_brasil';
+    case 'shopee':
+      return 'shopee';
+    case 'google_merchant':
+      return 'google_merchant';
+    default:
+      return 'driveparts';
+  }
+}
+
 function error_handler(logger: AppLogger): ErrorRequestHandler {
   return (error, request, response, next) => {
     if (response.headersSent) {
@@ -248,7 +445,10 @@ function error_handler(logger: AppLogger): ErrorRequestHandler {
       return;
     }
 
-    if (error instanceof NotificationIdempotencyConflictError) {
+    if (
+      error instanceof NotificationIdempotencyConflictError
+      || error instanceof PublicationResultIdempotencyConflictError
+    ) {
       response.status(409).json({
         ok: false,
         error: {

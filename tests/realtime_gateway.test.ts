@@ -52,6 +52,53 @@ describe('ecommerce realtime isolation', () => {
       .not.toBe(gateway.join_notification_user_room('store_1', 'same_user'));
   });
 
+  it('publishes terminal listing results only to the scoped store room', () => {
+    const emissions: Array<{ room: string; event_name: string; payload: unknown }> = [];
+    const io = {
+      to(room: string) {
+        return {
+          emit(event_name: string, payload: unknown) {
+            emissions.push({ room, event_name, payload });
+          }
+        };
+      }
+    } as unknown as Server;
+    const gateway = new RealtimeGateway(io, create_sync_cache());
+    const result = {
+      schema_version: 1 as const,
+      publication_result_id: 'listing_publication:delivery_1:1',
+      idempotency_key: 'listing_publication:delivery_1:1',
+      event_id: 'event_1',
+      delivery_id: 'delivery_1',
+      store_id: 'store_1',
+      inventory_item_integration_id: '66a3b5688f9c5ee8d8f92a10',
+      integration_id: 'integration_1',
+      inventory_item_id: 'inventory_item_1',
+      channel: 'shopee',
+      status: 'active' as const,
+      execution_id: 'event_1:delivery_1:1',
+      attempt: 1,
+      finished_at: '2026-07-25T22:41:28.979Z',
+      inventory_item_integration: {
+        inventory_item_integration_id: '66a3b5688f9c5ee8d8f92a10',
+        store_id: 'store_1',
+        integration_id: 'integration_1',
+        inventory_item_id: 'inventory_item_1',
+        channel: 'shopee',
+        status: 'active' as const,
+        execution_id: 'event_1:delivery_1:1'
+      }
+    };
+
+    gateway.publish_publication_result(result);
+
+    expect(emissions).toEqual([{
+      room: expected_room('publication_store', 'store_1'),
+      event_name: 'publication:result',
+      payload: result
+    }]);
+  });
+
   it('does not expose internal attendant data in the customer conversation payload', () => {
     const payload = serialize_ecommerce_customer_conversation({
       _id: new ObjectId(),

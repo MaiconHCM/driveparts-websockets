@@ -132,6 +132,25 @@ describe('Socket.IO handlers', () => {
     await tracker.drain();
   });
 
+  it('joins the publication room when recovering a session from before a deploy', async () => {
+    const test_context = create_test_context({
+      socket_enforce_permissions: true
+    });
+    const socket = create_store_socket({
+      permissions: ['publication_read']
+    });
+    (socket as unknown as { recovered: boolean }).recovered = true;
+    const tracker = new SocketWorkTracker(8, test_context.deps.logger);
+
+    register_store_socket(socket.as_authenticated(), test_context.deps, tracker);
+    await wait_for(() => socket.outbound.some(
+      (item) => item.event_name === 'connection:ready'
+    ));
+
+    expect(socket.joined_rooms).toContain('publication_store:store_1');
+    await tracker.drain();
+  });
+
   it('does not join customer rooms or emit snapshots without read permission in strict mode', async () => {
     const test_context = create_test_context({
       socket_enforce_permissions: true
@@ -214,10 +233,33 @@ describe('Socket.IO handlers', () => {
     expect(notification_socket.joined_rooms).toContain('notification_user:store_1:user_1');
     expect(notification_socket.joined_rooms).not.toContain('chat_user:store_1:user_1');
     expect(notification_socket.joined_rooms).not.toContain('chat_attendant:store_1:seller');
+
+    const publication_context = create_test_context({
+      socket_enforce_permissions: true
+    });
+    const publication_socket = create_store_socket({
+      permissions: ['publication_read']
+    });
+    const publication_tracker = new SocketWorkTracker(8, publication_context.deps.logger);
+
+    register_store_socket(
+      publication_socket.as_authenticated(),
+      publication_context.deps,
+      publication_tracker
+    );
+    await wait_for(() => publication_socket.outbound.some(
+      (item) => item.event_name === 'connection:ready'
+    ));
+
+    expect(publication_socket.joined_rooms).toContain('publication_store:store_1');
+    expect(publication_socket.joined_rooms).not.toContain('store:store_1');
+    expect(publication_socket.joined_rooms).not.toContain('notification_user:store_1:user_1');
+    expect(publication_socket.joined_rooms).not.toContain('chat_user:store_1:user_1');
     await Promise.all([
       ecommerce_tracker.drain(),
       chat_tracker.drain(),
-      notification_tracker.drain()
+      notification_tracker.drain(),
+      publication_tracker.drain()
     ]);
   });
 
@@ -523,6 +565,9 @@ function create_test_context(config_overrides: Partial<AppConfig> = {}) {
     ),
     join_notification_user_room: vi.fn(
       (store_id: string, user_id: string) => `notification_user:${store_id}:${user_id}`
+    ),
+    join_publication_store_room: vi.fn(
+      (store_id: string) => `publication_store:${store_id}`
     ),
     join_store_chat_attendant_room: vi.fn(
       (store_id: string, role: string) => `chat_attendant:${store_id}:${role}`

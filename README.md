@@ -34,6 +34,7 @@ de `store_id`, `visitor_id` e `inventory_item_id`.
 - `GET /health/live`
 - `GET /health/ready`
 - `POST /internal/notifications`
+- `POST /internal/publication-results`
 - `POST /internal/chat-messages/publish`
 
 As rotas internas exigem `x-internal-token` e validam chaves em `snake_case`.
@@ -68,6 +69,7 @@ Emitidos:
 - `ecommerce_chat:presence`
 - `notification:new`
 - `notification:read`
+- `publication:result`
 - `presence:update`
 
 ### Bootstrap, listeners e entrega
@@ -87,10 +89,11 @@ dispensa deduplicação na interface.
 ### Rooms e handlers
 
 As rooms são separadas por domínio e loja (`store`, `chat_user`,
-`notification_user`, `store_chat_attendant`, `ecommerce_store_attendant`,
-`ecommerce_customer`, `ecommerce_presence` e `store_presence_listener`). Cada
-componente dinâmico, inclusive `store_id`, é codificado em base64url; clientes não
-devem montar nem entrar nessas rooms diretamente.
+`notification_user`, `publication_store`, `store_chat_attendant`,
+`ecommerce_store_attendant`, `ecommerce_customer`, `ecommerce_presence` e
+`store_presence_listener`). Cada componente dinâmico, inclusive `store_id`, é
+codificado em base64url; clientes não devem montar nem entrar nessas rooms
+diretamente.
 
 O registro Socket.IO apenas direciona a conexão autenticada. Os fluxos de loja e
 visitante ficam em handlers separados, com validação, ACK, limite de trabalho em
@@ -256,3 +259,8 @@ dedicada e nunca exponha a porta a redes não confiáveis.
 Para o fluxo completo do atendimento, regras de responsável, payloads, rooms e integração com o DriveParts PHP:
 
 - `docs/ATENDIMENTO_CHAT.md`
+
+Para o contrato queue → WebSocket, cerca de execução e atualização seletiva do
+frontend:
+
+- `docs/PUBLICATION_RESULTS.md`

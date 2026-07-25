@@ -68,6 +68,13 @@ Persiste e publica uma notificação. Exige `x-internal-token`, chaves em
 `lower_snake_case` e payload válido. `idempotency_key` é opcional, mas
 recomendado.
 
+### `POST /internal/publication-results`
+
+Confirma o resultado terminal de uma publicação contra o snapshot autoritativo
+de `inventory_item_integrations` e, quando atual, emite `publication:result`.
+Erros também geram `notification:new`; sucessos não são persistidos como
+notificação. O contrato completo está em `docs/PUBLICATION_RESULTS.md`.
+
 ### `POST /internal/chat-messages/publish`
 
 Busca uma mensagem já persistida pelo `message_id` e a publica novamente nas
@@ -100,6 +107,7 @@ Token de usuário de loja:
     "chat_read",
     "chat_send",
     "notification_read",
+    "publication_read",
     "presence_read",
     "ecommerce_chat_read",
     "ecommerce_chat_send"
@@ -234,6 +242,7 @@ padrão é `10` operações a cada `60` segundos.
 - e-commerce: `ecommerce_chat:message`, `ecommerce_chat:contact`,
   `ecommerce_chat:read`
 - notificações: `notification:new`, `notification:read`
+- publicação de anúncios: `publication:result`
 - presença: `presence:update`
 
 `presence:update` é `volatile`: informação antiga não é acumulada, e uma nova
@@ -256,6 +265,7 @@ Rooms lógicas atuais:
 - `store(store_id)`
 - `chat_user(store_id, user_id)`
 - `notification_user(store_id, user_id)`
+- `publication_store(store_id)`
 - `store_chat_attendant(store_id, master|seller)`
 - `ecommerce_store_attendant(store_id, master|seller)`
 - `ecommerce_customer(store_id, visitor_id)`
@@ -341,6 +351,8 @@ Clientes devem aplicar eventos de forma idempotente:
 - `chat:message` e `ecommerce_chat:message`: deduplicar por `message_id`;
 - envio otimista: correlacionar também por `client_message_id`;
 - notificações: deduplicar por `notification_id`;
+- publicação: deduplicar por `publication_result_id` ou `idempotency_key` e
+  reconciliar vínculos ainda em `processing` ao receber `connection:ready`;
 - leituras, contato e presença: substituir o estado da entidade/conversa e não
   contar o evento como incremento.
 

@@ -50,5 +50,13 @@ describe('MongoDB indexes', () => {
       'store_id_1_last_message_at_-1_updated_at_-1__id_-1',
       'channel_1_store_id_1_visitor_id_1'
     ]));
+
+    const publication_receipt_index_names = indexes_by_collection
+      .get('websocket_publication_result_receipts')
+      ?.map((index) => index.name);
+    expect(publication_receipt_index_names).toEqual(expect.arrayContaining([
+      'store_id_1_idempotency_key_1',
+      'expires_at_1'
+    ]));
   });
 });

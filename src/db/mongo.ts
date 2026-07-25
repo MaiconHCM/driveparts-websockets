@@ -136,6 +136,18 @@ export async function ensure_indexes(db: Db): Promise<void> {
         partialFilterExpression: { idempotency_key: { $exists: true } }
       }
     ]),
+    db.collection('websocket_publication_result_receipts').createIndexes([
+      {
+        key: { store_id: 1, idempotency_key: 1 },
+        unique: true,
+        name: 'store_id_1_idempotency_key_1'
+      },
+      {
+        key: { expires_at: 1 },
+        expireAfterSeconds: 0,
+        name: 'expires_at_1'
+      }
+    ]),
     db.collection('store_presence').createIndexes([
       { key: { store_id: 1 }, unique: true, name: 'store_id_1' },
       { key: { last_seen_at: -1 }, name: 'last_seen_at_-1' }

@@ -234,3 +234,64 @@ export const internal_chat_message_schema = z.object({
 }).strict();
 
 export type InternalChatMessageInput = z.infer<typeof internal_chat_message_schema>;
+
+const publication_result_error_schema = z.object({
+  code: z.string().trim().min(1).max(128).optional(),
+  message: z.string().trim().min(1).max(500),
+  retryable: z.boolean().optional(),
+  status_code: z.number().int().min(100).max(599).optional()
+}).strict();
+
+export const internal_publication_result_schema = z.object({
+  schema_version: z.literal(1),
+  idempotency_key: id_value,
+  event_id: id_value,
+  delivery_id: id_value,
+  store_id: id_value,
+  integration_id: id_value,
+  inventory_item_id: id_value,
+  channel: z.string().trim().regex(lower_snake_case_value).max(80),
+  status: z.enum(['active', 'error']),
+  execution_id: id_value,
+  attempt: z.number().int().positive().max(1000),
+  finished_at: z.string().datetime({ offset: true }),
+  operation: z.string().trim().regex(lower_snake_case_value).max(128).optional(),
+  external_listing_id: z.string().trim().min(1).max(256).optional(),
+  error: publication_result_error_schema.optional()
+}).strict().superRefine((input, ctx) => {
+  const expected_execution_id = `${input.event_id}:${input.delivery_id}:${input.attempt}`;
+  if (input.execution_id !== expected_execution_id) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['execution_id'],
+      message: 'execution_id_must_match_event_delivery_and_attempt'
+    });
+  }
+
+  const expected_idempotency_key = `listing_publication:${input.delivery_id}:${input.attempt}`;
+  if (input.idempotency_key !== expected_idempotency_key) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['idempotency_key'],
+      message: 'idempotency_key_must_match_delivery_and_attempt'
+    });
+  }
+
+  if (input.status === 'error' && !input.error) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['error'],
+      message: 'error_is_required_for_error_status'
+    });
+  }
+
+  if (input.status === 'active' && input.error) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['error'],
+      message: 'error_is_not_allowed_for_active_status'
+    });
+  }
+});
+
+export type InternalPublicationResultInput = z.infer<typeof internal_publication_result_schema>;

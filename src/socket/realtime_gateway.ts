@@ -14,6 +14,9 @@ import type {
   EcommerceMessageDocument
 } from '../repositories/ecommerce_chat_repository.js';
 import type { NotificationDocument } from '../repositories/notification_repository.js';
+import type {
+  InventoryItemIntegrationSnapshot
+} from '../repositories/publication_result_repository.js';
 import type { StorePresencePayload } from '../services/presence_service.js';
 import type { SyncCache } from '../services/sync_cache.js';
 
@@ -33,6 +36,26 @@ type EcommerceReadPublishInput = {
   read_at: Date;
 };
 
+export type PublicationResultEvent = {
+  schema_version: 1;
+  publication_result_id: string;
+  idempotency_key: string;
+  event_id: string;
+  delivery_id: string;
+  store_id: string;
+  inventory_item_integration_id: string;
+  integration_id: string;
+  inventory_item_id: string;
+  channel: string;
+  status: 'active' | 'error';
+  execution_id: string;
+  attempt: number;
+  finished_at: string;
+  operation?: string;
+  external_listing_id?: string;
+  inventory_item_integration: InventoryItemIntegrationSnapshot;
+};
+
 export class RealtimeGateway {
   constructor(
     private readonly io: Server,
@@ -49,6 +72,10 @@ export class RealtimeGateway {
 
   join_notification_user_room(store_id: string, user_id: string): string {
     return notification_user_room(store_id, user_id);
+  }
+
+  join_publication_store_room(store_id: string): string {
+    return publication_store_room(store_id);
   }
 
   join_store_chat_attendant_room(store_id: string, user_role: ChatAttendantRole): string {
@@ -195,6 +222,12 @@ export class RealtimeGateway {
       read_at: notification.read_at?.toISOString() ?? new Date().toISOString()
     });
   }
+
+  publish_publication_result(result: PublicationResultEvent): void {
+    this.io
+      .to(publication_store_room(result.store_id))
+      .emit('publication:result', result);
+  }
 }
 
 function store_room(store_id: string): string {
@@ -207,6 +240,10 @@ function chat_user_room(store_id: string, user_id: string): string {
 
 function notification_user_room(store_id: string, user_id: string): string {
   return build_room('notification_user', store_id, user_id);
+}
+
+function publication_store_room(store_id: string): string {
+  return build_room('publication_store', store_id);
 }
 
 function store_chat_attendant_room(store_id: string, user_role: ChatAttendantRole): string {

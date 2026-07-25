@@ -42,6 +42,35 @@ function create_repository() {
 }
 
 describe('NotificationRepository', () => {
+  it('returns the existing notification for an idempotent repeated publication error', async () => {
+    const existing = create_notification({
+      type: 'listing_error',
+      severity: 'error',
+      entity: 'integration',
+      message: 'Falha na publicação.',
+      integration_id: 'integration_1',
+      inventory_item_id: 'inventory_item_1'
+    });
+    const { repository, collection } = create_repository();
+    collection.findOne.mockResolvedValue(existing);
+
+    await expect(repository.create_notification({
+      store_id: existing.store_id,
+      user_id: existing.user_id,
+      type: existing.type,
+      severity: existing.severity,
+      source: existing.source,
+      entity: existing.entity,
+      title: existing.title,
+      message: existing.message,
+      idempotency_key: existing.idempotency_key,
+      integration_id: existing.integration_id,
+      inventory_item_id: existing.inventory_item_id
+    })).resolves.toBe(existing);
+
+    expect(collection.insertOne).not.toHaveBeenCalled();
+  });
+
   it('rejects reuse of an idempotency key with a different target or payload', async () => {
     const { repository, collection } = create_repository();
     collection.findOne.mockResolvedValue(create_notification());

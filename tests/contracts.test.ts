@@ -6,6 +6,7 @@ import {
   ecommerce_chat_customer_send_schema,
   ecommerce_chat_store_send_schema,
   internal_notification_schema,
+  internal_publication_result_schema,
   socket_jwt_payload_schema
 } from '../src/contracts/schemas.js';
 
@@ -94,6 +95,87 @@ describe('realtime contracts', () => {
     });
 
     expect(payload.type).toBe('listing_updated');
+  });
+
+  it('accepts strict publication result contracts for success and error', () => {
+    const base = {
+      schema_version: 1,
+      idempotency_key: 'listing_publication:delivery_1:1',
+      event_id: 'event_1',
+      delivery_id: 'delivery_1',
+      store_id: 'store_1',
+      integration_id: 'integration_1',
+      inventory_item_id: 'inventory_item_1',
+      channel: 'mercado_libre_brasil',
+      execution_id: 'event_1:delivery_1:1',
+      attempt: 1,
+      finished_at: '2026-07-25T22:41:28.979Z'
+    };
+    const active = internal_publication_result_schema.parse({
+      ...base,
+      status: 'active',
+      operation: 'created',
+      external_listing_id: 'MLB123'
+    });
+    const error = internal_publication_result_schema.parse({
+      ...base,
+      status: 'error',
+      error: {
+        code: 'api_error',
+        message: 'Marketplace recusou o anúncio.',
+        retryable: false,
+        status_code: 400
+      }
+    });
+
+    expect(active.status).toBe('active');
+    expect(error.error?.status_code).toBe(400);
+  });
+
+  it('rejects inconsistent or unbounded publication result contracts', () => {
+    const base = {
+      schema_version: 1,
+      idempotency_key: 'listing_publication:delivery_1:1',
+      event_id: 'event_1',
+      delivery_id: 'delivery_1',
+      store_id: 'store_1',
+      integration_id: 'integration_1',
+      inventory_item_id: 'inventory_item_1',
+      channel: 'shopee',
+      status: 'error',
+      execution_id: 'different_execution',
+      attempt: 1,
+      finished_at: '2026-07-25T22:41:28.979Z'
+    };
+
+    expect(() => internal_publication_result_schema.parse({
+      ...base,
+      error: {
+        message: 'x'.repeat(501)
+      }
+    })).toThrow();
+    expect(() => internal_publication_result_schema.parse({
+      ...base,
+      idempotency_key: 'wrong_key',
+      execution_id: 'event_1:delivery_1:1',
+      error: {
+        message: 'Falha.'
+      }
+    })).toThrow();
+    expect(() => internal_publication_result_schema.parse({
+      ...base,
+      error: {
+        message: 'Falha',
+        response_body: 'not_allowed'
+      }
+    })).toThrow();
+    expect(() => internal_publication_result_schema.parse({
+      ...base,
+      status: 'active',
+      error: {
+        message: 'Falha'
+      }
+    })).toThrow();
   });
 
   it('accepts a scoped anonymous website customer token', () => {

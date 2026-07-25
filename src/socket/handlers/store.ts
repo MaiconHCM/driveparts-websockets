@@ -147,6 +147,11 @@ async function bootstrap_store_socket(
     identity.permissions,
     'ecommerce_chat_read'
   );
+  const can_read_publications = permission_allowed(
+    deps.config,
+    identity.permissions,
+    'publication_read'
+  );
 
   if (!socket.recovered) {
     if (can_read_notifications) {
@@ -176,6 +181,14 @@ async function bootstrap_store_socket(
         user_role
       ));
     }
+  }
+
+  // A recovered session may have been created before this room existed. Joining
+  // is idempotent and guarantees publication feedback after rolling deploys.
+  if (can_read_publications) {
+    await socket.join(deps.realtime_gateway.join_publication_store_room(
+      identity.store_id
+    ));
   }
 
   assert_socket_connected(socket, state);
