@@ -1,6 +1,9 @@
 services:
   websocket:
-    image: maiconhcm/websocket:latest
+    image: driveparts-websocket:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
     container_name: driveparts-websocket
     restart: unless-stopped
     ports:

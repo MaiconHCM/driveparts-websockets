@@ -96,29 +96,26 @@ npm run dev
 O build é multi-stage (`tsc` → `node dist/src/index.js`) e roda como usuário não-root.
 MongoDB e Redis são externos (não fazem parte do compose).
 
-A imagem é publicada **pública** em `maiconhcm/websocket`. Por isso ela **não contém
-nenhum segredo**: o `compose.yaml` tem só o serviço `websocket` e **todas as variáveis
-vêm do `.env` externo** (`env_file`), inclusive `MONGODB_URL` e `REDIS_URL` apontando
-para Mongo/Redis externos. O `.env` fica apenas local (já no `.gitignore`/`.dockerignore`),
-nunca versionado nem embutido na imagem.
+O deploy constrói a imagem local `driveparts-websocket:latest` diretamente deste
+repositório. Não é necessário publicar nem baixar a aplicação pelo Docker Hub.
+Os segredos continuam apenas no `.env` local (já no `.gitignore`/`.dockerignore`)
+e são interpolados pelo Compose; nunca são versionados nem embutidos na imagem.
 
-### Publicar no Docker Hub
+### Primeiro deploy na VPS
 
 ```bash
-docker login -u maiconhcm
-IMAGE_TAG=0.1.0 docker compose build   # ou: docker build -t maiconhcm/websocket:0.1.0 .
-IMAGE_TAG=0.1.0 docker compose push
-# opcional: também publicar como latest
-docker tag maiconhcm/websocket:0.1.0 maiconhcm/websocket:latest
-docker push maiconhcm/websocket:latest
+git clone https://github.com/MaiconHCM/driveparts-websockets.git
+cd driveparts-websockets
+cp .env.example .env
+# preencha os segredos; defina NODE_ENV=production e CORS_ORIGINS
+docker compose up -d --build
 ```
 
-### Rodar no VPS (consumindo a imagem pública)
+### Atualizar na VPS
 
 ```bash
-cp .env.example .env   # preencha os segredos; defina NODE_ENV=production e CORS_ORIGINS
-docker compose pull    # baixa maiconhcm/websocket (não precisa do código-fonte)
-docker compose up -d
+git pull --ff-only
+docker compose up -d --build
 docker compose logs -f
 ```
 
@@ -144,7 +141,6 @@ docker compose -f compose.internal.yaml up -d
 
 Notas:
 
-- Escolha a tag publicada com `IMAGE_TAG` (default `latest`).
 - Dentro do container, `127.0.0.1` é o próprio container. Para alcançar Mongo/Redis
   instalados no host do VPS, use `host.docker.internal` no `.env` (o compose já mapeia
   `host.docker.internal` → `host-gateway`).
