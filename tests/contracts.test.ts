@@ -138,6 +138,38 @@ describe('realtime contracts', () => {
     });
   });
 
+  it('accepts a Mercado Livre listing attention notification from the queue', () => {
+    const payload = internal_notification_schema.parse({
+      idempotency_key: `marketplace_listing_attention:${'a'.repeat(64)}`,
+      store_id: 'store_1',
+      type: 'listing_error',
+      severity: 'warning',
+      source: 'mercado_livre_brasil',
+      entity: 'listing',
+      channel: 'mercado_libre_brasil',
+      title: 'Anúncio requer atenção no Mercado Livre',
+      message: 'O anúncio está em revisão no Mercado Livre.',
+      integration_id: 'integration_1',
+      inventory_item_id: 'item_1',
+      external_listing_id: 'MLB100',
+      data: {
+        marketplace_notification_id: 'b'.repeat(64),
+        integration_listing_id: 'listing_1',
+        remote_status: 'under_review',
+        remote_sub_status: ['waiting_for_patch'],
+        attention_reason: 'waiting_for_patch'
+      }
+    });
+
+    expect(payload).toMatchObject({
+      type: 'listing_error',
+      severity: 'warning',
+      source: 'mercado_livre_brasil',
+      entity: 'listing',
+      external_listing_id: 'MLB100'
+    });
+  });
+
   it('accepts strict publication result contracts for success and error', () => {
     const base = {
       schema_version: 1,

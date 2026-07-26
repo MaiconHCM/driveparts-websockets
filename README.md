@@ -44,17 +44,18 @@ parsing ou persistência; `/health/live` permanece ativo e `/health/ready` retor
 
 ### Notificações do marketplace
 
-A queue envia mensagens e perguntas recebidas, e o DriveParts envia novas
-vendas, pelo `POST /internal/notifications`:
+A queue envia mensagens, perguntas e pendências de anúncios recebidas, e o
+DriveParts envia novas vendas, pelo `POST /internal/notifications`:
 
 | Evento | `type` | `entity` |
 | --- | --- | --- |
 | Mensagem de uma venda | `marketplace_message_received` | `integration_sale_message` |
 | Pergunta em um anúncio | `marketplace_question_received` | `integration_question` |
+| Anúncio parado por pendência/moderação | `listing_error` | `listing` |
 | Nova venda processada | `marketplace_sale_created` | `sale` |
 
-Para mensagens e perguntas do Mercado Livre, `source` e `channel` usam
-`mercado_libre_brasil`. Exemplo:
+Para mensagens, perguntas e pendências do Mercado Livre, `source` e `channel`
+usam `mercado_libre_brasil`. Exemplo:
 
 ```json
 {
