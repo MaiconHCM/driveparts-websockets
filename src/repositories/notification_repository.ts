@@ -210,20 +210,23 @@ export class NotificationRepository {
           read_at: { $exists: false }
         })
         .sort({ _id: -1 })
+        .limit(input.limit)
         .toArray(),
       input.unread_only
         ? Promise.resolve([])
         : this.list_pending_question_notifications(
           input.store_id,
-          input.user_id
+          input.user_id,
+          input.limit
         )
     ]);
 
-    return merge_notifications_by_id([
+    const merged = merge_notifications_by_id([
       ...latest,
       ...unread,
       ...pending_questions
     ]);
+    return merged.length > input.limit ? merged.slice(-input.limit) : merged;
   }
 
   async mark_read(
@@ -286,7 +289,8 @@ export class NotificationRepository {
 
   private async list_pending_question_notifications(
     store_id: string,
-    user_id: string
+    user_id: string,
+    limit: number
   ): Promise<NotificationDocument[]> {
     const pending_questions = await this.integration_questions
       .find(
@@ -303,6 +307,7 @@ export class NotificationRepository {
         }
       )
       .sort({ _id: -1 })
+      .limit(limit)
       .toArray();
     const notification_identity_queries = pending_questions
       .map((question): Filter<NotificationDocument> | null => {
@@ -336,6 +341,7 @@ export class NotificationRepository {
           ]
         })
         .sort({ _id: -1 })
+        .limit(limit)
         .toArray()
     )));
 

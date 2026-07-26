@@ -8,6 +8,7 @@ import {
   ecommerce_chat_store_read_schema,
   ecommerce_chat_store_send_schema,
   ecommerce_chat_store_sync_schema,
+  NOTIFICATION_SYNC_LIMIT,
   notification_read_all_schema,
   notification_read_schema,
   notification_sync_schema,
@@ -238,7 +239,7 @@ async function bootstrap_store_socket(
               store_id: identity.store_id,
               user_id: identity.user_id,
               unread_only: true,
-              limit: 50
+              limit: NOTIFICATION_SYNC_LIMIT
             })
             : Promise.resolve([])
         ]);

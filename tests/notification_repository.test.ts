@@ -324,7 +324,7 @@ describe('NotificationRepository', () => {
     );
   });
 
-  it('keeps all unread and unanswered-question notifications outside the recent limit', async () => {
+  it('bounds the combined recent, unread and unanswered-question snapshot', async () => {
     const { repository, collection, questions } = create_repository();
     const recent = create_notification({
       _id: new ObjectId('66a3b5688f9c5ee8d8f92a11'),
@@ -345,11 +345,10 @@ describe('NotificationRepository', () => {
       },
       read_at: new Date('2026-07-25T12:05:00.000Z')
     });
-    collection.find
-      .mockReturnValueOnce(create_mock_cursor([recent]))
-      .mockReturnValueOnce(create_mock_cursor([unread]))
-      .mockReturnValueOnce(create_mock_cursor([pending_question]));
-    questions.find.mockReturnValue(create_mock_cursor([{
+    const recent_cursor = create_mock_cursor([recent]);
+    const unread_cursor = create_mock_cursor([unread]);
+    const pending_notification_cursor = create_mock_cursor([pending_question]);
+    const pending_question_cursor = create_mock_cursor([{
       _id: new ObjectId('66a3b5688f9c5ee8d8f92a14'),
       store_id: 'store_1',
       integration_id: 'integration_1',
@@ -357,7 +356,12 @@ describe('NotificationRepository', () => {
       raw_data: {
         status: 'unanswered'
       }
-    }]));
+    }]);
+    collection.find
+      .mockReturnValueOnce(recent_cursor)
+      .mockReturnValueOnce(unread_cursor)
+      .mockReturnValueOnce(pending_notification_cursor);
+    questions.find.mockReturnValue(pending_question_cursor);
 
     const notifications = await repository.list_notifications({
       store_id: 'store_1',
@@ -367,10 +371,12 @@ describe('NotificationRepository', () => {
     });
 
     expect(notifications.map((notification) => notification._id.toHexString())).toEqual([
-      recent._id.toHexString(),
-      unread._id.toHexString(),
       pending_question._id.toHexString()
     ]);
+    expect(recent_cursor.limit).toHaveBeenCalledWith(1);
+    expect(unread_cursor.limit).toHaveBeenCalledWith(1);
+    expect(pending_question_cursor.limit).toHaveBeenCalledWith(1);
+    expect(pending_notification_cursor.limit).toHaveBeenCalledWith(1);
     expect(collection.find.mock.calls[2]?.[0]).toMatchObject({
       store_id: 'store_1',
       $and: [

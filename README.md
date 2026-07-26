@@ -121,7 +121,9 @@ Registre todos os listeners antes de chamar `connect()` no cliente. Em uma conex
 nova, o servidor emite primeiro os snapshots disponíveis (`chat:sync`,
 `notification:sync`, `ecommerce_chat:sync` e `ecommerce_chat:presence`) e somente
 depois emite `connection:ready`. Os handlers de entrada já ficam instalados durante
-o bootstrap, mas respondem `not_ready` até esse evento.
+o bootstrap, mas respondem `not_ready` até esse evento. A sincronização de
+notificações retorna no máximo 30 registros por chamada; o cliente continua a
+paginação com `after_notification_id`.
 
 O consumidor deve tratar a entrega realtime como **at-least-once**: uma reconexão
 ou repetição no transporte pode repetir um evento. Faça deduplicação pelos IDs
@@ -249,8 +251,9 @@ Notas:
   instalados no host do VPS, o `compose.yaml` atual mapeia
   `host.docker.internal` → `host-gateway`. O `compose.internal.yaml` usa os nomes
   `mongo` e `redis` da própria rede e não cria esse alias.
-- Nos composes com serviços externos, `REDIS_URL` pode ser sobrescrita no `.env`;
-  sem override, permanece `redis://172.17.0.1:6379`.
+- O `compose.yaml` usa por padrão um Redis dedicado e transitório para Socket.IO,
+  presença, cache e rate limit (`redis://websocket-redis:6379`). `REDIS_URL` pode
+  ser sobrescrita no `.env` quando houver um Redis dedicado externo.
 - Nos composes externos, o `.env` precisa conter `MONGODB_URL` ou, para
   compatibilidade com a stack atual, `MONGODB_PASSWORD`. Também são obrigatórios
   `DRIVEPARTS_INTERNAL_TOKEN` e `WEBSOCKET_JWT_SECRET`.
@@ -262,6 +265,9 @@ Notas:
 
 - O adapter Redis Streams distribui eventos entre instâncias e retoma o consumo
   após indisponibilidades temporárias.
+- O compose de produção mantém esse Redis separado do BullMQ. Como MongoDB é a
+  fonte durável, persistência Redis fica desativada para evitar I/O desnecessário;
+  reinícios apenas invalidam cache/presença e os clientes refazem o bootstrap.
 - O stream do adapter usa `MAXLEN=10000`; stream entries não possuem TTL. Chaves de
   presença, cache, rate limit e, quando habilitada, sessão recuperável têm expiração
   própria.

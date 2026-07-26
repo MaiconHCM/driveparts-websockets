@@ -7,6 +7,7 @@ import {
   ecommerce_chat_store_send_schema,
   internal_notification_schema,
   internal_publication_result_schema,
+  notification_sync_schema,
   socket_jwt_payload_schema
 } from '../src/contracts/schemas.js';
 
@@ -80,6 +81,12 @@ describe('realtime contracts', () => {
     expect(() => chat_sync_schema.parse({
       before_message_id: 'message_10'
     })).toThrow();
+  });
+
+  it('bounds notification synchronization to thirty records', () => {
+    expect(notification_sync_schema.parse({}).limit).toBe(30);
+    expect(notification_sync_schema.parse({ limit: 20 }).limit).toBe(20);
+    expect(() => notification_sync_schema.parse({ limit: 31 })).toThrow();
   });
 
   it('accepts listing notification payload', () => {
