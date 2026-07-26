@@ -36,6 +36,12 @@ type EcommerceReadPublishInput = {
   read_at: Date;
 };
 
+type NotificationsReadAllPublishInput = {
+  store_id: string;
+  user_id: string;
+  read_at: Date;
+};
+
 export type PublicationResultEvent = {
   schema_version: 1;
   publication_result_id: string;
@@ -220,6 +226,22 @@ export class RealtimeGateway {
       store_id: notification.store_id,
       ...(notification.user_id ? { user_id: notification.user_id } : {}),
       read_at: notification.read_at?.toISOString() ?? new Date().toISOString()
+    });
+  }
+
+  async publish_notifications_read_all(input: NotificationsReadAllPublishInput): Promise<void> {
+    await Promise.all([
+      this.sync_cache.invalidate_notification(input.store_id),
+      this.sync_cache.invalidate_notification(input.store_id, input.user_id)
+    ]);
+
+    this.io.to([
+      store_room(input.store_id),
+      notification_user_room(input.store_id, input.user_id)
+    ]).emit('notification:read_all', {
+      store_id: input.store_id,
+      user_id: input.user_id,
+      read_at: input.read_at.toISOString()
     });
   }
 

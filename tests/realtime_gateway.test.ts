@@ -99,6 +99,43 @@ describe('ecommerce realtime isolation', () => {
     }]);
   });
 
+  it('publishes bulk notification reads to the store and requesting user rooms', async () => {
+    const emissions: Array<{ rooms: string[]; event_name: string; payload: unknown }> = [];
+    const io = {
+      to(rooms: string[]) {
+        return {
+          emit(event_name: string, payload: unknown) {
+            emissions.push({ rooms, event_name, payload });
+          }
+        };
+      }
+    } as unknown as Server;
+    const sync_cache = create_sync_cache();
+    const gateway = new RealtimeGateway(io, sync_cache);
+    const read_at = new Date('2026-07-25T14:30:00.000Z');
+
+    await gateway.publish_notifications_read_all({
+      store_id: 'store_1',
+      user_id: 'user_1',
+      read_at
+    });
+
+    expect(emissions).toEqual([{
+      rooms: [
+        expected_room('store', 'store_1'),
+        expected_room('notification_user', 'store_1', 'user_1')
+      ],
+      event_name: 'notification:read_all',
+      payload: {
+        store_id: 'store_1',
+        user_id: 'user_1',
+        read_at: read_at.toISOString()
+      }
+    }]);
+    expect(sync_cache.invalidate_notification).toHaveBeenCalledWith('store_1');
+    expect(sync_cache.invalidate_notification).toHaveBeenCalledWith('store_1', 'user_1');
+  });
+
   it('does not expose internal attendant data in the customer conversation payload', () => {
     const payload = serialize_ecommerce_customer_conversation({
       _id: new ObjectId(),

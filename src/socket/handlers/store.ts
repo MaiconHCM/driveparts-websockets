@@ -7,6 +7,7 @@ import {
   ecommerce_chat_store_read_schema,
   ecommerce_chat_store_send_schema,
   ecommerce_chat_store_sync_schema,
+  notification_read_all_schema,
   notification_read_schema,
   notification_sync_schema,
   presence_sync_schema
@@ -615,6 +616,43 @@ function install_store_event_handlers(
       await handle_handler_error(deps, err, ack, {
         event_name: 'notification:read',
         invalid_payload_message: 'invalid_notification_read_payload',
+        context
+      });
+    }
+  });
+
+  register_socket_event(socket, tracker, 'notification:read_all', is_ready, async (payload, ack) => {
+    if (!require_permission(
+      deps.config,
+      identity.permissions,
+      'notification_read',
+      ack,
+      'notification_read_not_allowed'
+    )) {
+      return;
+    }
+
+    try {
+      notification_read_all_schema.parse(payload ?? {});
+      const read_result = await deps.notification_repository.mark_all_read(
+        identity.store_id,
+        identity.user_id
+      );
+      if (read_result.updated_count > 0) {
+        await deps.realtime_gateway.publish_notifications_read_all({
+          store_id: identity.store_id,
+          user_id: identity.user_id,
+          read_at: read_result.read_at
+        });
+      }
+      send_ack(ack, ok_ack({
+        updated_count: read_result.updated_count,
+        read_at: read_result.read_at.toISOString()
+      }));
+    } catch (err) {
+      await handle_handler_error(deps, err, ack, {
+        event_name: 'notification:read_all',
+        invalid_payload_message: 'invalid_notification_read_all_payload',
         context
       });
     }

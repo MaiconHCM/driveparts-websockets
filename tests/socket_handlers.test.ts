@@ -283,6 +283,40 @@ describe('Socket.IO handlers', () => {
     await tracker.drain();
   });
 
+  it('marks all visible notifications and publishes the shared read time', async () => {
+    const test_context = create_test_context();
+    const read_at = new Date('2026-07-25T14:30:00.000Z');
+    test_context.notification_repository.mark_all_read.mockResolvedValue({
+      updated_count: 4,
+      read_at
+    });
+    const socket = create_store_socket();
+    const tracker = new SocketWorkTracker(8, test_context.deps.logger);
+
+    register_store_socket(socket.as_authenticated(), test_context.deps, tracker);
+    await wait_for(() => socket.outbound.some((item) => item.event_name === 'connection:ready'));
+
+    const ack = vi.fn();
+    socket.receive('notification:read_all', {}, ack);
+    await wait_for(() => ack.mock.calls.length === 1);
+
+    expect(test_context.notification_repository.mark_all_read)
+      .toHaveBeenCalledWith('store_1', 'user_1');
+    expect(test_context.gateway.publish_notifications_read_all).toHaveBeenCalledWith({
+      store_id: 'store_1',
+      user_id: 'user_1',
+      read_at
+    });
+    expect(ack).toHaveBeenCalledWith({
+      ok: true,
+      data: {
+        updated_count: 4,
+        read_at: read_at.toISOString()
+      }
+    });
+    await tracker.drain();
+  });
+
   it('returns service unavailable when the distributed customer quota is uncertain', async () => {
     const test_context = create_test_context();
     test_context.customer_rate_limiter.consume.mockResolvedValueOnce({
@@ -511,7 +545,8 @@ function create_test_context(config_overrides: Partial<AppConfig> = {}) {
   };
   const notification_repository = {
     list_notifications: vi.fn(async () => []),
-    mark_read: vi.fn()
+    mark_read: vi.fn(),
+    mark_all_read: vi.fn()
   };
   const presence_service = {
     register: vi.fn(async (store_id: string): Promise<PresenceTransition> => ({
@@ -586,7 +621,8 @@ function create_test_context(config_overrides: Partial<AppConfig> = {}) {
     publish_ecommerce_message: vi.fn(async () => undefined),
     publish_ecommerce_contact: vi.fn(async () => undefined),
     publish_ecommerce_read: vi.fn(async () => undefined),
-    publish_notification_read: vi.fn(async () => undefined)
+    publish_notification_read: vi.fn(async () => undefined),
+    publish_notifications_read_all: vi.fn(async () => undefined)
   };
 
   const deps: HandlerDependencies = {

@@ -29,6 +29,7 @@ function create_repository() {
   const collection = {
     findOne: vi.fn(async () => null as NotificationDocument | null),
     findOneAndUpdate: vi.fn(async () => null as NotificationDocument | null),
+    updateMany: vi.fn(async () => ({ acknowledged: true, modifiedCount: 0 })),
     insertOne: vi.fn(async () => ({ acknowledged: true }))
   };
   const db = {
@@ -132,5 +133,29 @@ describe('NotificationRepository', () => {
       changed: true
     });
     expect(collection.findOne).not.toHaveBeenCalled();
+  });
+
+  it('marks every visible unread notification with one stable read time', async () => {
+    const { repository, collection } = create_repository();
+    collection.updateMany.mockResolvedValue({
+      acknowledged: true,
+      modifiedCount: 3
+    });
+
+    const result = await repository.mark_all_read('store_1', 'user_1');
+
+    expect(result.updated_count).toBe(3);
+    expect(result.read_at).toBeInstanceOf(Date);
+    expect(collection.updateMany).toHaveBeenCalledWith(
+      {
+        store_id: 'store_1',
+        read_at: { $exists: false },
+        $or: [
+          { user_id: { $exists: false } },
+          { user_id: 'user_1' }
+        ]
+      },
+      { $set: { read_at: result.read_at } }
+    );
   });
 });

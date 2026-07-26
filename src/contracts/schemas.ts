@@ -203,6 +203,10 @@ export const notification_read_schema = z.object({
 
 export type NotificationReadInput = z.infer<typeof notification_read_schema>;
 
+export const notification_read_all_schema = z.object({}).strict();
+
+export type NotificationReadAllInput = z.infer<typeof notification_read_all_schema>;
+
 export const presence_sync_schema = z.object({
   store_ids: z.array(id_value).min(1).max(100)
 }).strict();

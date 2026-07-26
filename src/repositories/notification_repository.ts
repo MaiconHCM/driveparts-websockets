@@ -35,6 +35,11 @@ export type NotificationReadResult = {
   changed: boolean;
 };
 
+export type NotificationsReadAllResult = {
+  updated_count: number;
+  read_at: Date;
+};
+
 type ListNotificationsInput = {
   store_id: string;
   user_id: string;
@@ -165,6 +170,26 @@ export class NotificationRepository {
     return {
       notification: await this.notifications.findOne(filter),
       changed: false
+    };
+  }
+
+  async mark_all_read(
+    store_id: string,
+    user_id: string
+  ): Promise<NotificationsReadAllResult> {
+    const read_at = new Date();
+    const result = await this.notifications.updateMany(
+      {
+        store_id,
+        read_at: { $exists: false },
+        $or: build_notification_visibility_conditions(user_id)
+      },
+      { $set: { read_at } }
+    );
+
+    return {
+      updated_count: result.modifiedCount,
+      read_at
     };
   }
 }
