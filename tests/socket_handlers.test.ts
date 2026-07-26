@@ -337,6 +337,10 @@ describe('Socket.IO handlers', () => {
     expect(test_context.ecommerce_chat_repository.create_customer_message)
       .toHaveBeenCalledWith(expect.objectContaining({
         customer_phone: '+5511999999999',
+        lead_metadata: expect.objectContaining({
+          source: 'mercado_drive',
+          landing_page_url: 'https://mercadodrive.com.br/item/item_1'
+        }),
         body: 'Esta peça está disponível?'
       }));
     expect(test_context.gateway.publish_ecommerce_message).toHaveBeenCalledWith(message);
@@ -895,6 +899,12 @@ function create_customer_socket(
     inventory_item_id: 'item_1',
     inventory_item_name: 'Motor',
     inventory_item_url: 'https://mercadodrive.com.br/item/item_1',
+    inventory_item_checkout_url: 'https://mercadodrive.com.br/comprar/pagamento/item_1',
+    lead_metadata: {
+      source: 'mercado_drive',
+      device_type: 'desktop',
+      landing_page_url: 'https://mercadodrive.com.br/item/item_1'
+    },
     permissions: [
       'ecommerce_chat_send',
       'ecommerce_chat_read',

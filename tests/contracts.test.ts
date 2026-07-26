@@ -229,6 +229,14 @@ describe('realtime contracts', () => {
       inventory_item_id: 'inventory_item_1',
       inventory_item_name: 'Motor',
       inventory_item_url: 'https://mercadodrive.com.br/peca/motor/inventory_item_1',
+      inventory_item_checkout_url: 'https://mercadodrive.com.br/comprar/pagamento/inventory_item_1',
+      lead_metadata: {
+        source: 'mercado_drive',
+        device_type: 'mobile',
+        landing_page_url: 'https://mercadodrive.com.br/peca/motor/inventory_item_1?utm_source=google',
+        ip_address: '203.0.113.10',
+        utm_source: 'google'
+      },
       customer_email: 'cliente@example.com',
       customer_phone: '+5511999999999',
       permissions: ['ecommerce_chat_send', 'ecommerce_chat_read', 'ecommerce_chat_contact']

@@ -78,6 +78,12 @@ describe('Socket authentication recovery scope', () => {
       inventory_item_id: 'item_1',
       inventory_item_name: 'Motor',
       inventory_item_url: 'https://example.com/item_1',
+      inventory_item_checkout_url: 'https://example.com/checkout/item_1',
+      lead_metadata: {
+        source: 'mercado_drive',
+        device_type: 'desktop',
+        landing_page_url: 'https://example.com/item_1'
+      },
       permissions: ['ecommerce_chat_read']
     }, config.websocket_jwt_secret);
     const socket = create_socket(token, {

@@ -116,6 +116,7 @@ export function serialize_ecommerce_conversation(conversation: EcommerceConversa
     } : {}),
     status: conversation.status,
     inventory_item_reference: conversation.inventory_item_reference,
+    lead_metadata: conversation.lead_metadata,
     ...(conversation.responsible_user_id ? { responsible_user_id: conversation.responsible_user_id } : {}),
     ...(conversation.responsible_user_name ? { responsible_user_name: conversation.responsible_user_name } : {}),
     ...(conversation.responsible_user_role ? { responsible_user_role: conversation.responsible_user_role } : {}),

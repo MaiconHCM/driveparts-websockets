@@ -152,7 +152,13 @@ describe('ecommerce realtime isolation', () => {
       inventory_item_reference: {
         inventory_item_id: 'inventory_item_1',
         inventory_item_name: 'Motor',
-        inventory_item_url: 'https://mercadodrive.com.br/peca/motor/inventory_item_1'
+        inventory_item_url: 'https://mercadodrive.com.br/peca/motor/inventory_item_1',
+        inventory_item_checkout_url: 'https://mercadodrive.com.br/comprar/pagamento/inventory_item_1'
+      },
+      lead_metadata: {
+        source: 'mercado_drive',
+        device_type: 'desktop',
+        landing_page_url: 'https://mercadodrive.com.br/peca/motor/inventory_item_1'
       },
       responsible_user_id: 'internal_user_1',
       responsible_user_name: 'Vendedor',
@@ -166,6 +172,7 @@ describe('ecommerce realtime isolation', () => {
     expect(payload).not.toHaveProperty('visitor_id');
     expect(payload).not.toHaveProperty('responsible_user_id');
     expect(payload).not.toHaveProperty('unread_store_count');
+    expect(payload).not.toHaveProperty('lead_metadata');
     expect(payload).toMatchObject({
       customer_email: 'cliente@example.com',
       customer_phone: '+5511999999999',
@@ -202,7 +209,13 @@ describe('ecommerce realtime isolation', () => {
       inventory_item_reference: {
         inventory_item_id: 'inventory_item_1',
         inventory_item_name: 'Motor',
-        inventory_item_url: 'https://mercadodrive.com.br/peca/motor/inventory_item_1'
+        inventory_item_url: 'https://mercadodrive.com.br/peca/motor/inventory_item_1',
+        inventory_item_checkout_url: 'https://mercadodrive.com.br/comprar/pagamento/inventory_item_1'
+      },
+      lead_metadata: {
+        source: 'mercado_drive',
+        device_type: 'mobile',
+        landing_page_url: 'https://mercadodrive.com.br/peca/motor/inventory_item_1'
       },
       created_at: new Date(),
       updated_at: new Date(),

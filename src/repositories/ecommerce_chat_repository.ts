@@ -13,7 +13,22 @@ export type EcommerceInventoryItemReference = {
   inventory_item_id: string;
   inventory_item_name: string;
   inventory_item_url: string;
+  inventory_item_checkout_url: string;
   inventory_item_thumbnail_url?: string;
+};
+
+export type EcommerceLeadMetadata = {
+  source: 'mercado_drive';
+  device_type: 'desktop' | 'mobile' | 'tablet' | 'unknown';
+  landing_page_url: string;
+  ip_address?: string;
+  user_agent?: string;
+  referrer_url?: string;
+  utm_source?: string;
+  utm_medium?: string;
+  utm_campaign?: string;
+  utm_content?: string;
+  utm_term?: string;
 };
 
 export type EcommerceConversationDocument = {
@@ -29,6 +44,7 @@ export type EcommerceConversationDocument = {
   customer_contact_updated_at?: Date;
   status: 'waiting' | 'open' | 'closed';
   inventory_item_reference: EcommerceInventoryItemReference;
+  lead_metadata: EcommerceLeadMetadata;
   responsible_user_id?: string;
   responsible_user_name?: string;
   responsible_user_role?: 'master' | 'seller';
@@ -69,6 +85,7 @@ type CustomerIdentity = {
   store_id: string;
   store_name: string;
   inventory_item_reference: EcommerceInventoryItemReference;
+  lead_metadata: EcommerceLeadMetadata;
 };
 
 type CreateCustomerMessageInput = CustomerIdentity & {
@@ -527,6 +544,7 @@ export class EcommerceChatRepository {
       ...((input.customer_email || input.customer_phone) ? { customer_contact_updated_at: now } : {}),
       status: 'waiting',
       inventory_item_reference: input.inventory_item_reference,
+      lead_metadata: input.lead_metadata,
       created_at: now,
       updated_at: now,
       unread_store_count: 0,
@@ -853,5 +871,6 @@ function inventory_references_equal(
   return left.inventory_item_id === right.inventory_item_id
     && left.inventory_item_name === right.inventory_item_name
     && left.inventory_item_url === right.inventory_item_url
+    && left.inventory_item_checkout_url === right.inventory_item_checkout_url
     && left.inventory_item_thumbnail_url === right.inventory_item_thumbnail_url;
 }

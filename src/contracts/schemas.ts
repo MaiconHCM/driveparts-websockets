@@ -25,6 +25,20 @@ const chat_reference_schema = z.object({
   thumbnail_url: z.string().trim().min(1).max(2000).optional()
 }).strict();
 
+const ecommerce_lead_metadata_schema = z.object({
+  source: z.literal('mercado_drive'),
+  device_type: z.enum(['desktop', 'mobile', 'tablet', 'unknown']),
+  landing_page_url: z.string().trim().url().max(2000),
+  ip_address: z.string().trim().min(1).max(45).optional(),
+  user_agent: z.string().trim().min(1).max(512).optional(),
+  referrer_url: z.string().trim().url().max(2000).optional(),
+  utm_source: z.string().trim().min(1).max(255).optional(),
+  utm_medium: z.string().trim().min(1).max(255).optional(),
+  utm_campaign: z.string().trim().min(1).max(255).optional(),
+  utm_content: z.string().trim().min(1).max(255).optional(),
+  utm_term: z.string().trim().min(1).max(255).optional()
+}).strict();
+
 const socket_registered_claims_shape = {
   iat: z.number().optional(),
   exp: z.number().optional(),
@@ -56,7 +70,9 @@ export const socket_website_customer_jwt_payload_schema = z.object({
   inventory_item_id: id_value,
   inventory_item_name: z.string().trim().min(1).max(255),
   inventory_item_url: z.string().trim().url().max(2000),
+  inventory_item_checkout_url: z.string().trim().url().max(2000),
   inventory_item_thumbnail_url: z.string().trim().url().max(2000).optional(),
+  lead_metadata: ecommerce_lead_metadata_schema,
   permissions: z.array(z.string().regex(lower_snake_case_value)).default([]),
   ...socket_registered_claims_shape
 }).strict();

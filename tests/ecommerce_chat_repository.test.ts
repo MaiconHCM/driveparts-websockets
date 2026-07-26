@@ -69,7 +69,18 @@ function create_inventory_reference(
     inventory_item_id,
     inventory_item_name: `Item ${inventory_item_id}`,
     inventory_item_url: `https://example.test/items/${inventory_item_id}`,
+    inventory_item_checkout_url: `https://example.test/checkout/${inventory_item_id}`,
     inventory_item_thumbnail_url: `https://example.test/items/${inventory_item_id}.jpg`
+  };
+}
+
+function create_lead_metadata() {
+  return {
+    source: 'mercado_drive' as const,
+    device_type: 'desktop' as const,
+    landing_page_url: 'https://example.test/peca/item_1',
+    ip_address: '203.0.113.10',
+    user_agent: 'Test Browser'
   };
 }
 
@@ -88,6 +99,7 @@ function create_conversation(
     visitor_name: 'Visitor 1',
     status: 'waiting',
     inventory_item_reference: create_inventory_reference(),
+    lead_metadata: create_lead_metadata(),
     created_at: now,
     updated_at: now,
     unread_store_count: 0,
@@ -103,6 +115,7 @@ function create_customer_input(overrides: Record<string, unknown> = {}) {
     visitor_id: 'visitor_1',
     visitor_name: 'Visitor 1',
     inventory_item_reference: create_inventory_reference(),
+    lead_metadata: create_lead_metadata(),
     body: 'Olá',
     ...overrides
   };
@@ -315,6 +328,8 @@ describe('EcommerceChatRepository', () => {
     expect(first_conversation.conversation_key).toMatch(/^ecommerce_conversation:v2:/);
     expect(second_conversation.conversation_key).toMatch(/^ecommerce_conversation:v2:/);
     expect(first_conversation.conversation_key).not.toBe(second_conversation.conversation_key);
+    expect(first_conversation.lead_metadata).toEqual(create_lead_metadata());
+    expect(second_conversation.lead_metadata).toEqual(create_lead_metadata());
   });
 
   it('looks up a customer conversation by channel, store and visitor', async () => {

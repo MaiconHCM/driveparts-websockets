@@ -108,7 +108,8 @@ async function bootstrap_customer_socket(
       : {}),
     store_id: identity.store_id,
     store_name: identity.store_name,
-    inventory_item_reference: build_inventory_item_reference(identity)
+    inventory_item_reference: build_inventory_item_reference(identity),
+    lead_metadata: identity.lead_metadata
   });
   if (identity_sync.changed) {
     await deps.sync_cache.invalidate_ecommerce(identity.store_id, identity.visitor_id);
@@ -257,6 +258,7 @@ function install_customer_event_handlers(
         store_id: identity.store_id,
         store_name: identity.store_name,
         inventory_item_reference: build_inventory_item_reference(identity),
+        lead_metadata: identity.lead_metadata,
         body: input.body,
         client_message_id: input.client_message_id
       });
@@ -443,6 +445,7 @@ function build_inventory_item_reference(
     inventory_item_id: identity.inventory_item_id,
     inventory_item_name: identity.inventory_item_name,
     inventory_item_url: identity.inventory_item_url,
+    inventory_item_checkout_url: identity.inventory_item_checkout_url,
     ...(identity.inventory_item_thumbnail_url
       ? { inventory_item_thumbnail_url: identity.inventory_item_thumbnail_url }
       : {})

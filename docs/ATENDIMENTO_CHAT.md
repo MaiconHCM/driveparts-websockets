@@ -129,6 +129,15 @@ Token do cliente do site:
   "inventory_item_id": "item_id",
   "inventory_item_name": "Produto",
   "inventory_item_url": "https://example.test/item",
+  "inventory_item_checkout_url": "https://example.test/comprar/pagamento/item_id",
+  "lead_metadata": {
+    "source": "mercado_drive",
+    "device_type": "mobile",
+    "landing_page_url": "https://example.test/item?utm_source=google",
+    "ip_address": "203.0.113.10",
+    "referrer_url": "https://www.google.com/",
+    "utm_source": "google"
+  },
   "permissions": [
     "ecommerce_chat_read",
     "ecommerce_chat_send",
@@ -139,8 +148,10 @@ Token do cliente do site:
 }
 ```
 
-`customer_email`, `customer_phone` e `inventory_item_thumbnail_url` são
-opcionais. Os schemas são estritos; campos fora do contrato são rejeitados.
+`customer_email`, `customer_phone`, `inventory_item_thumbnail_url` e os campos
+complementares de `lead_metadata` são opcionais. `lead_metadata` é persistido
+na conversa e serializado somente para atendentes da loja; não volta ao
+visitante. Os schemas são estritos; campos fora do contrato são rejeitados.
 
 ### Flags de compatibilidade
 
