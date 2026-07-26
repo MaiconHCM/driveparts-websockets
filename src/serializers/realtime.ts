@@ -1,4 +1,7 @@
-import type { ChatMessageDocument } from '../repositories/chat_repository.js';
+import type {
+  ChatAttendanceThreadSummary,
+  ChatMessageDocument
+} from '../repositories/chat_repository.js';
 import type {
   EcommerceConversationDocument,
   EcommerceMessageDocument
@@ -47,6 +50,30 @@ export function serialize_chat_message(message: ChatMessageDocument) {
         assigned_at: responsible.assigned_at.toISOString()
       }))
     } : {})
+  };
+}
+
+export function serialize_attendance_thread(thread: ChatAttendanceThreadSummary) {
+  return {
+    attendance_thread_id: thread.attendance_thread_id,
+    attendance_thread_key: thread.attendance_thread_key,
+    ...(thread.client_thread_id ? { client_thread_id: thread.client_thread_id } : {}),
+    channel: thread.channel,
+    status: thread.status,
+    peer_store: thread.peer_store,
+    last_message_preview: thread.last_message_preview,
+    ...(thread.last_message_at ? { last_message_at: thread.last_message_at.toISOString() } : {}),
+    updated_at: thread.updated_at.toISOString(),
+    attendance_responsibles: thread.attendance_responsibles.map((responsible) => ({
+      store_id: responsible.store_id,
+      user_id: responsible.user_id,
+      user_name: responsible.user_name,
+      user_role: responsible.user_role,
+      assigned_at: responsible.assigned_at.toISOString()
+    })),
+    responsible_label: thread.responsible_label,
+    is_pending_for_current_store: thread.is_pending_for_current_store,
+    single_attendant_enabled: thread.single_attendant_enabled
   };
 }
 

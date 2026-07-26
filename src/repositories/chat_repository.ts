@@ -148,6 +148,31 @@ type ListMessagesResult = {
   has_more: boolean;
 };
 
+export type ChatAttendanceThreadSummary = {
+  attendance_thread_id: string;
+  attendance_thread_key: string;
+  client_thread_id?: string;
+  channel: AttendanceChannel;
+  status: AttendanceThreadStatus;
+  peer_store: {
+    store_id: string;
+  };
+  last_message_preview: string;
+  last_message_at?: Date;
+  updated_at: Date;
+  attendance_responsibles: ChatAttendanceResponsibleDocument[];
+  responsible_label: string;
+  is_pending_for_current_store: boolean;
+  single_attendant_enabled: boolean;
+};
+
+type ListRecentAttendanceThreadsInput = {
+  store_id: string;
+  user_id: string;
+  user_role: ChatUserRole;
+  limit: number;
+};
+
 export type MarkConversationReadResult = {
   updated_count: number;
   participant_store_ids: string[];
@@ -353,6 +378,82 @@ export class ChatRepository {
       messages: await this.attach_thread_metadata(latest_messages.slice(0, input.limit).reverse()),
       has_more: latest_messages.length > input.limit
     };
+  }
+
+  async list_recent_attendance_threads(
+    input: ListRecentAttendanceThreadsInput
+  ): Promise<ChatAttendanceThreadSummary[]> {
+    const user_role = normalize_chat_user_role(input.user_role);
+    if (!is_chat_attendant_role(user_role)) {
+      return [];
+    }
+
+    const single_attendant_enabled = await this.is_single_attendant_enabled(input.store_id);
+    const query: Filter<ChatConversationDocument> = {
+      participant_store_ids: input.store_id,
+      channel: 'store_to_store',
+      last_message_id: { $type: 'string', $ne: '' }
+    };
+
+    if (user_role === 'seller' && single_attendant_enabled) {
+      query.$or = [
+        {
+          'origin.store_id': input.store_id,
+          'origin.responsible_user_id': { $in: [input.user_id, null, ''] }
+        },
+        {
+          'target.store_id': input.store_id,
+          'target.responsible_user_id': { $in: [input.user_id, null, ''] }
+        }
+      ];
+    }
+
+    const threads = await this.threads
+      .find(query)
+      .sort({ updated_at: -1, _id: -1 })
+      .limit(input.limit)
+      .toArray();
+    const responsibles = threads.flatMap(get_thread_responsibles);
+    const disabled_single_attendant_store_ids = await this.list_disabled_single_attendant_store_ids(
+      responsibles.map((responsible) => responsible.store_id)
+    );
+
+    return threads.map((thread) => {
+      const attendance_responsibles = this.filter_attendance_responsibles(
+        get_thread_responsibles(thread),
+        disabled_single_attendant_store_ids
+      );
+      const current_store_responsible = attendance_responsibles.find(
+        (responsible) => responsible.store_id === input.store_id
+      );
+      const peer_store_id = thread.origin.store_id === input.store_id
+        ? thread.target.store_id
+        : thread.origin.store_id;
+
+      return {
+        attendance_thread_id: thread._id.toHexString(),
+        attendance_thread_key: thread.attendance_thread_key,
+        ...(thread.client_thread_id ? { client_thread_id: thread.client_thread_id } : {}),
+        channel: thread.channel,
+        status: thread.status,
+        peer_store: {
+          store_id: peer_store_id
+        },
+        last_message_preview: thread.last_message_preview ?? 'Mensagem',
+        ...(thread.last_message_at ? { last_message_at: thread.last_message_at } : {}),
+        updated_at: thread.updated_at,
+        attendance_responsibles,
+        responsible_label: single_attendant_enabled
+          ? (
+            current_store_responsible
+              ? `Resp.: ${current_store_responsible.user_name}`
+              : 'Pendente'
+          )
+          : 'Atendimento compartilhado',
+        is_pending_for_current_store: single_attendant_enabled && !current_store_responsible,
+        single_attendant_enabled
+      };
+    });
   }
 
   async find_message_by_id(message_id: string): Promise<ChatMessageDocument | null> {

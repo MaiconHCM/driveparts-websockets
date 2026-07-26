@@ -110,6 +110,12 @@ export const chat_sync_schema = z.object({
 
 export type ChatSyncInput = z.infer<typeof chat_sync_schema>;
 
+export const attendance_sync_schema = z.object({
+  limit: z.number().int().min(1).max(50).default(30)
+}).strict();
+
+export type AttendanceSyncInput = z.infer<typeof attendance_sync_schema>;
+
 export const chat_read_schema = z.object({
   attendance_thread_id: object_id_value
 }).strict();

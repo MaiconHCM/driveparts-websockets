@@ -1,5 +1,6 @@
 import { error_ack, ok_ack, type AckResponse } from '../../contracts/ack.js';
 import {
+  attendance_sync_schema,
   chat_read_schema,
   chat_send_schema,
   chat_sync_schema,
@@ -19,6 +20,7 @@ import {
   type ChatUserRole
 } from '../../repositories/chat_repository.js';
 import {
+  serialize_attendance_thread,
   serialize_chat_message,
   serialize_ecommerce_conversation,
   serialize_ecommerce_message,
@@ -214,7 +216,7 @@ async function bootstrap_store_socket(
       identity.user_id,
       permission_scope,
       async () => {
-        const [chat_sync_result, notifications] = await Promise.all([
+        const [chat_sync_result, attendance_threads, notifications] = await Promise.all([
           can_read_chat
             ? deps.chat_repository.list_messages({
               store_id: identity.store_id,
@@ -223,6 +225,14 @@ async function bootstrap_store_socket(
               limit: 30
             })
             : Promise.resolve({ messages: [], has_more: false }),
+          can_read_chat
+            ? deps.chat_repository.list_recent_attendance_threads({
+              store_id: identity.store_id,
+              user_id: identity.user_id,
+              user_role,
+              limit: 30
+            })
+            : Promise.resolve([]),
           can_read_notifications
             ? deps.notification_repository.list_notifications({
               store_id: identity.store_id,
@@ -238,6 +248,10 @@ async function bootstrap_store_socket(
             chat: {
               messages: chat_sync_result.messages.map(serialize_chat_message),
               has_more: chat_sync_result.has_more
+            },
+            attendance: {
+              threads: attendance_threads.map(serialize_attendance_thread),
+              limit: 30
             }
           } : {}),
           ...(can_read_notifications ? {
@@ -253,6 +267,9 @@ async function bootstrap_store_socket(
 
     if (snapshots.chat) {
       socket.emit('chat:sync', snapshots.chat);
+    }
+    if (snapshots.attendance) {
+      socket.emit('attendance:sync', snapshots.attendance);
     }
     if (snapshots.notifications) {
       socket.emit('notification:sync', snapshots.notifications);
@@ -381,6 +398,39 @@ function install_store_event_handlers(
       await handle_handler_error(deps, err, ack, {
         event_name: 'chat:sync',
         invalid_payload_message: 'invalid_chat_sync_payload',
+        context
+      });
+    }
+  });
+
+  register_socket_event(socket, tracker, 'attendance:sync', is_ready, async (payload, ack) => {
+    if (!require_permission(
+      deps.config,
+      identity.permissions,
+      'chat_read',
+      ack,
+      'chat_read_not_allowed'
+    )) {
+      return;
+    }
+
+    try {
+      const input = attendance_sync_schema.parse(payload ?? {});
+      const threads = await deps.chat_repository.list_recent_attendance_threads({
+        store_id: identity.store_id,
+        user_id: identity.user_id,
+        user_role,
+        limit: input.limit
+      });
+
+      send_ack(ack, ok_ack({
+        threads: threads.map(serialize_attendance_thread),
+        limit: input.limit
+      }));
+    } catch (err) {
+      await handle_handler_error(deps, err, ack, {
+        event_name: 'attendance:sync',
+        invalid_payload_message: 'invalid_attendance_sync_payload',
         context
       });
     }

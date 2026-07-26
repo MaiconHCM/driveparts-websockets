@@ -32,6 +32,7 @@ describe('Socket.IO handlers', () => {
   it('installs handlers before bootstrap and emits ready only after snapshots', async () => {
     const snapshots = deferred<{
       chat: { messages: unknown[]; has_more: boolean };
+      attendance: { threads: unknown[]; limit: number };
       notifications: { notifications: unknown[] };
     }>();
     const test_context = create_test_context();
@@ -55,12 +56,14 @@ describe('Socket.IO handlers', () => {
 
     snapshots.resolve({
       chat: { messages: [], has_more: false },
+      attendance: { threads: [], limit: 30 },
       notifications: { notifications: [] }
     });
     await wait_for(() => socket.outbound.some((item) => item.event_name === 'connection:ready'));
 
     expect(socket.outbound.map((item) => item.event_name)).toEqual([
       'chat:sync',
+      'attendance:sync',
       'notification:sync',
       'connection:ready'
     ]);
@@ -481,6 +484,59 @@ describe('Socket.IO handlers', () => {
     await tracker.drain();
   });
 
+  it('returns only the requested recent attendance thread summaries', async () => {
+    const test_context = create_test_context();
+    const updated_at = new Date('2026-07-26T12:00:00.000Z');
+    test_context.chat_repository.list_recent_attendance_threads.mockResolvedValue([{
+      attendance_thread_id: new ObjectId().toHexString(),
+      attendance_thread_key: 'store_to_store:store_1:store_2:thread_1',
+      channel: 'store_to_store',
+      status: 'open',
+      peer_store: {
+        store_id: 'store_2'
+      },
+      last_message_preview: 'Mensagem recente',
+      last_message_at: updated_at,
+      updated_at,
+      attendance_responsibles: [],
+      responsible_label: 'Pendente',
+      is_pending_for_current_store: true,
+      single_attendant_enabled: true
+    }]);
+    const socket = create_store_socket();
+    const tracker = new SocketWorkTracker(8, test_context.deps.logger);
+
+    register_store_socket(socket.as_authenticated(), test_context.deps, tracker);
+    await wait_for(() => socket.outbound.some(
+      (item) => item.event_name === 'connection:ready'
+    ));
+
+    const ack = vi.fn();
+    socket.receive('attendance:sync', { limit: 20 }, ack);
+    await wait_for(() => ack.mock.calls.length === 1);
+
+    expect(test_context.chat_repository.list_recent_attendance_threads)
+      .toHaveBeenLastCalledWith({
+        store_id: 'store_1',
+        user_id: 'user_1',
+        user_role: 'seller',
+        limit: 20
+      });
+    expect(ack).toHaveBeenCalledWith(expect.objectContaining({
+      ok: true,
+      data: expect.objectContaining({
+        limit: 20,
+        threads: [
+          expect.objectContaining({
+            peer_store: { store_id: 'store_2' },
+            updated_at: updated_at.toISOString()
+          })
+        ]
+      })
+    }));
+    await tracker.drain();
+  });
+
   it('limits concurrent work per socket and returns a retryable busy ACK', async () => {
     const test_context = create_test_context();
     const socket = create_store_socket();
@@ -620,6 +676,9 @@ function create_test_context(config_overrides: Partial<AppConfig> = {}) {
   };
   const chat_repository = {
     list_messages: vi.fn(async () => ({ messages: [], has_more: false })),
+    list_recent_attendance_threads: vi.fn<ChatRepository['list_recent_attendance_threads']>(
+      async () => []
+    ),
     create_message: vi.fn(),
     mark_conversation_read: vi.fn()
   };

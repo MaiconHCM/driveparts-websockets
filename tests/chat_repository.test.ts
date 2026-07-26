@@ -531,6 +531,54 @@ describe('ChatRepository message concurrency', () => {
     );
   });
 
+  it('lists a bounded recent attendance summary scoped to the current seller', async () => {
+    const { repository, settings, threads } = create_repository();
+    const recent_thread = create_thread({
+      last_message_id: 'message_1',
+      last_message_preview: 'Mensagem recente',
+      last_message_at: new Date('2026-07-26T12:00:00.000Z'),
+      updated_at: new Date('2026-07-26T12:00:00.000Z')
+    });
+    const thread_cursor = create_mock_cursor([recent_thread]);
+    settings.findOne.mockResolvedValue(null);
+    settings.find.mockReturnValue(create_mock_cursor([]));
+    threads.find.mockReturnValue(thread_cursor);
+
+    const summaries = await repository.list_recent_attendance_threads({
+      store_id: 'store_a',
+      user_id: 'seller_a',
+      user_role: 'seller',
+      limit: 30
+    });
+
+    expect(threads.find).toHaveBeenCalledWith({
+      participant_store_ids: 'store_a',
+      channel: 'store_to_store',
+      last_message_id: { $type: 'string', $ne: '' },
+      $or: [
+        {
+          'origin.store_id': 'store_a',
+          'origin.responsible_user_id': { $in: ['seller_a', null, ''] }
+        },
+        {
+          'target.store_id': 'store_a',
+          'target.responsible_user_id': { $in: ['seller_a', null, ''] }
+        }
+      ]
+    });
+    expect(thread_cursor.sort).toHaveBeenCalledWith({ updated_at: -1, _id: -1 });
+    expect(thread_cursor.limit).toHaveBeenCalledWith(30);
+    expect(summaries).toEqual([
+      expect.objectContaining({
+        attendance_thread_id: recent_thread._id.toHexString(),
+        peer_store: { store_id: 'store_b' },
+        last_message_preview: 'Mensagem recente',
+        responsible_label: 'Resp.: Seller A',
+        is_pending_for_current_store: false
+      })
+    ]);
+  });
+
   it('aborts the transaction when a concurrent close makes the guarded thread update miss', async () => {
     const { repository, settings, threads, messages, session } = create_repository(true);
     const open_thread = create_thread({
