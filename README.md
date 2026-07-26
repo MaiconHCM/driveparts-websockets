@@ -83,6 +83,8 @@ Recebidos:
 - `ecommerce_chat:read`
 - `ecommerce_chat:contact`
 - `ecommerce_chat:conversations`
+- `marketplace_chat:read`
+- `marketplace_chat:read_all`
 - `notification:sync`
 - `notification:read`
 - `notification:read_all`
@@ -97,6 +99,8 @@ Emitidos:
 - `ecommerce_chat:read`
 - `ecommerce_chat:contact`
 - `ecommerce_chat:presence`
+- `marketplace_chat:read`
+- `marketplace_chat:read_all`
 - `notification:new`
 - `notification:read`
 - `notification:read_all`

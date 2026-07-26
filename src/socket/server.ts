@@ -5,6 +5,7 @@ import type { AppLogger } from '../config/logger.js';
 import { RedisRuntime, type RedisHealth } from '../redis/runtime.js';
 import type { ChatRepository } from '../repositories/chat_repository.js';
 import type { EcommerceChatRepository } from '../repositories/ecommerce_chat_repository.js';
+import type { MarketplaceChatRepository } from '../repositories/marketplace_chat_repository.js';
 import type { NotificationRepository } from '../repositories/notification_repository.js';
 import type { PresenceRepository } from '../repositories/presence_repository.js';
 import { CustomerRateLimiter } from '../services/customer_rate_limiter.js';
@@ -19,6 +20,7 @@ type SocketServerDependencies = {
   logger: AppLogger;
   chat_repository: ChatRepository;
   ecommerce_chat_repository: EcommerceChatRepository;
+  marketplace_chat_repository: MarketplaceChatRepository;
   notification_repository: NotificationRepository;
   presence_repository: PresenceRepository;
 };
@@ -90,6 +92,7 @@ export async function create_socket_server(
     logger: deps.logger,
     chat_repository: deps.chat_repository,
     ecommerce_chat_repository: deps.ecommerce_chat_repository,
+    marketplace_chat_repository: deps.marketplace_chat_repository,
     notification_repository: deps.notification_repository,
     presence_service,
     customer_rate_limiter,

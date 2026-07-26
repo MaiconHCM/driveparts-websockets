@@ -36,6 +36,17 @@ type EcommerceReadPublishInput = {
   read_at: Date;
 };
 
+type MarketplaceReadPublishInput = {
+  conversation_key: string;
+  store_id: string;
+  read_at: Date;
+};
+
+type MarketplaceReadAllPublishInput = {
+  store_id: string;
+  read_at: Date;
+};
+
 type NotificationsReadAllPublishInput = {
   store_id: string;
   user_id: string;
@@ -90,6 +101,10 @@ export class RealtimeGateway {
 
   join_ecommerce_store_attendant_room(store_id: string, user_role: ChatAttendantRole): string {
     return ecommerce_store_attendant_room(store_id, user_role);
+  }
+
+  join_marketplace_store_attendant_room(store_id: string, user_role: ChatAttendantRole): string {
+    return marketplace_store_attendant_room(store_id, user_role);
   }
 
   join_ecommerce_customer_room(store_id: string, visitor_id: string): string {
@@ -179,6 +194,27 @@ export class RealtimeGateway {
       conversation_id: input.conversation_id,
       store_id: input.store_id,
       reader_type: input.reader_type,
+      read_at: input.read_at.toISOString()
+    });
+  }
+
+  publish_marketplace_read(input: MarketplaceReadPublishInput): void {
+    this.io.to([
+      marketplace_store_attendant_room(input.store_id, 'master'),
+      marketplace_store_attendant_room(input.store_id, 'seller')
+    ]).emit('marketplace_chat:read', {
+      conversation_key: input.conversation_key,
+      store_id: input.store_id,
+      read_at: input.read_at.toISOString()
+    });
+  }
+
+  publish_marketplace_read_all(input: MarketplaceReadAllPublishInput): void {
+    this.io.to([
+      marketplace_store_attendant_room(input.store_id, 'master'),
+      marketplace_store_attendant_room(input.store_id, 'seller')
+    ]).emit('marketplace_chat:read_all', {
+      store_id: input.store_id,
       read_at: input.read_at.toISOString()
     });
   }
@@ -274,6 +310,10 @@ function store_chat_attendant_room(store_id: string, user_role: ChatAttendantRol
 
 function ecommerce_store_attendant_room(store_id: string, user_role: ChatAttendantRole): string {
   return build_room('ecommerce_store_attendant', store_id, user_role);
+}
+
+function marketplace_store_attendant_room(store_id: string, user_role: ChatAttendantRole): string {
+  return build_room('marketplace_store_attendant', store_id, user_role);
 }
 
 function ecommerce_customer_room(store_id: string, visitor_id: string): string {

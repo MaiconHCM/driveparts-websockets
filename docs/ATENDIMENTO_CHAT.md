@@ -114,7 +114,8 @@ Token de usuário de loja:
     "publication_read",
     "presence_read",
     "ecommerce_chat_read",
-    "ecommerce_chat_send"
+    "ecommerce_chat_send",
+    "marketplace_chat_read"
   ],
   "iat": 0,
   "exp": 0
@@ -232,6 +233,7 @@ dados como `retryable`, `retry_after_seconds` ou
 - `chat:send`, `chat:sync`, `chat:read`
 - `ecommerce_chat:conversations`, `ecommerce_chat:sync`
 - `ecommerce_chat:send`, `ecommerce_chat:read`
+- `marketplace_chat:read`, `marketplace_chat:read_all`
 - `notification:sync`, `notification:read`, `notification:read_all`
 - `presence:sync`
 
@@ -261,6 +263,7 @@ padrão é `10` operações a cada `60` segundos.
 - chat entre lojas: `chat:message`, `chat:read`
 - e-commerce: `ecommerce_chat:message`, `ecommerce_chat:contact`,
   `ecommerce_chat:read`
+- marketplace: `marketplace_chat:read`, `marketplace_chat:read_all`
 - notificações: `notification:new`, `notification:read`, `notification:read_all`
 - publicação de anúncios: `publication:result`
 - presença: `presence:update`
@@ -300,7 +303,9 @@ No chat entre lojas, `master` sempre recebe o lado da loja. Sem responsável, os
 `seller` também recebem; após a assunção, a publicação é direcionada ao usuário
 responsável. Notificação com `user_id` vai à room individual; sem `user_id`,
 vai à room da loja. Eventos de e-commerce vão aos atendentes `master` e
-`seller` da loja e ao visitante daquela conversa.
+`seller` da loja e ao visitante daquela conversa. Eventos de leitura do
+marketplace permanecem internos ao DriveParts e vão somente aos atendentes da
+mesma loja.
 
 ## Redis
 

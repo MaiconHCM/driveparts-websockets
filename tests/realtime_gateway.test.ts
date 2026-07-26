@@ -99,6 +99,40 @@ describe('ecommerce realtime isolation', () => {
     }]);
   });
 
+  it('publishes marketplace reads only to attendants from the same store', () => {
+    const emissions: Array<{ rooms: string[]; event_name: string; payload: unknown }> = [];
+    const io = {
+      to(rooms: string[]) {
+        return {
+          emit(event_name: string, payload: unknown) {
+            emissions.push({ rooms, event_name, payload });
+          }
+        };
+      }
+    } as unknown as Server;
+    const gateway = new RealtimeGateway(io, create_sync_cache());
+    const read_at = new Date('2026-07-26T14:30:00.000Z');
+
+    gateway.publish_marketplace_read({
+      conversation_key: 'conversation_key_1',
+      store_id: 'store_1',
+      read_at
+    });
+
+    expect(emissions).toEqual([{
+      rooms: [
+        expected_room('marketplace_store_attendant', 'store_1', 'master'),
+        expected_room('marketplace_store_attendant', 'store_1', 'seller')
+      ],
+      event_name: 'marketplace_chat:read',
+      payload: {
+        conversation_key: 'conversation_key_1',
+        store_id: 'store_1',
+        read_at: read_at.toISOString()
+      }
+    }]);
+  });
+
   it('publishes bulk notification reads to the store and requesting user rooms', async () => {
     const emissions: Array<{ rooms: string[]; event_name: string; payload: unknown }> = [];
     const io = {

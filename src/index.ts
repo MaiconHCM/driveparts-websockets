@@ -5,6 +5,7 @@ import { connect_mongo, ensure_indexes } from './db/mongo.js';
 import { create_http_app } from './http/app.js';
 import { ChatRepository } from './repositories/chat_repository.js';
 import { EcommerceChatRepository } from './repositories/ecommerce_chat_repository.js';
+import { MarketplaceChatRepository } from './repositories/marketplace_chat_repository.js';
 import { NotificationRepository } from './repositories/notification_repository.js';
 import { PresenceRepository } from './repositories/presence_repository.js';
 import { PublicationResultRepository } from './repositories/publication_result_repository.js';
@@ -32,6 +33,7 @@ async function main(): Promise<void> {
       mongo.db,
       config.mongodb_transactions_enabled
     );
+    const marketplace_chat_repository = new MarketplaceChatRepository(mongo.db);
     const notification_repository = new NotificationRepository(mongo.db);
     const presence_repository = new PresenceRepository(mongo.db);
     const publication_result_repository = new PublicationResultRepository(mongo.db);
@@ -40,6 +42,7 @@ async function main(): Promise<void> {
       logger,
       chat_repository,
       ecommerce_chat_repository,
+      marketplace_chat_repository,
       notification_repository,
       presence_repository
     });

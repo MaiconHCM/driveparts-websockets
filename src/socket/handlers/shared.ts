@@ -5,6 +5,7 @@ import type { AppLogger } from '../../config/logger.js';
 import { error_ack, type AckResponse } from '../../contracts/ack.js';
 import type { ChatRepository } from '../../repositories/chat_repository.js';
 import type { EcommerceChatRepository } from '../../repositories/ecommerce_chat_repository.js';
+import type { MarketplaceChatRepository } from '../../repositories/marketplace_chat_repository.js';
 import type { NotificationRepository } from '../../repositories/notification_repository.js';
 import type { CustomerRateLimiter } from '../../services/customer_rate_limiter.js';
 import type { PresenceService } from '../../services/presence_service.js';
@@ -20,6 +21,7 @@ export type HandlerDependencies = {
   logger: AppLogger;
   chat_repository: ChatRepository;
   ecommerce_chat_repository: EcommerceChatRepository;
+  marketplace_chat_repository: MarketplaceChatRepository;
   notification_repository: NotificationRepository;
   presence_service: PresenceService;
   customer_rate_limiter: CustomerRateLimiter;

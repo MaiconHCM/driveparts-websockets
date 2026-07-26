@@ -11,6 +11,7 @@ import type {
   EcommerceChatRepository,
   EcommerceMessageDocument
 } from '../src/repositories/ecommerce_chat_repository.js';
+import type { MarketplaceChatRepository } from '../src/repositories/marketplace_chat_repository.js';
 import type {
   NotificationDocument,
   NotificationRepository
@@ -422,6 +423,47 @@ describe('Socket.IO handlers', () => {
     await tracker.drain();
   });
 
+  it('marks a marketplace conversation locally and publishes the read event', async () => {
+    const test_context = create_test_context();
+    const read_at = new Date('2026-07-26T14:30:00.000Z');
+    const conversation_key = Buffer.from(JSON.stringify({
+      channel: 'mercado_libre_brasil',
+      integration_id: 'integration_1',
+      resource_type: 'pack',
+      resource_id: 'pack_1'
+    })).toString('base64url');
+    test_context.marketplace_chat_repository.mark_conversation_read.mockResolvedValue({
+      updated_count: 2,
+      read_at
+    });
+    const socket = create_store_socket();
+    const tracker = new SocketWorkTracker(8, test_context.deps.logger);
+
+    register_store_socket(socket.as_authenticated(), test_context.deps, tracker);
+    await wait_for(() => socket.outbound.some((item) => item.event_name === 'connection:ready'));
+
+    const ack = vi.fn();
+    socket.receive('marketplace_chat:read', { conversation_key }, ack);
+    await wait_for(() => ack.mock.calls.length === 1);
+
+    expect(test_context.marketplace_chat_repository.mark_conversation_read)
+      .toHaveBeenCalledWith('store_1', conversation_key);
+    expect(test_context.gateway.publish_marketplace_read).toHaveBeenCalledWith({
+      conversation_key,
+      store_id: 'store_1',
+      read_at
+    });
+    expect(ack).toHaveBeenCalledWith({
+      ok: true,
+      data: {
+        conversation_key,
+        updated_count: 2,
+        read_at: read_at.toISOString()
+      }
+    });
+    await tracker.drain();
+  });
+
   it('returns additive notification pagination metadata for history sync', async () => {
     const test_context = create_test_context();
     const notification = {
@@ -769,6 +811,10 @@ function create_test_context(config_overrides: Partial<AppConfig> = {}) {
     create_store_message: vi.fn(),
     mark_store_read: vi.fn()
   };
+  const marketplace_chat_repository = {
+    mark_conversation_read: vi.fn(),
+    mark_all_read: vi.fn()
+  };
   const notification_repository = {
     list_notifications: vi.fn<NotificationRepository['list_notifications']>(async () => ({
       notifications: [],
@@ -839,6 +885,9 @@ function create_test_context(config_overrides: Partial<AppConfig> = {}) {
     join_ecommerce_store_attendant_room: vi.fn(
       (store_id: string, role: string) => `ecommerce_attendant:${store_id}:${role}`
     ),
+    join_marketplace_store_attendant_room: vi.fn(
+      (store_id: string, role: string) => `marketplace_attendant:${store_id}:${role}`
+    ),
     join_ecommerce_customer_room: vi.fn(
       (store_id: string, visitor_id: string) => `customer:${store_id}:${visitor_id}`
     ),
@@ -850,6 +899,8 @@ function create_test_context(config_overrides: Partial<AppConfig> = {}) {
     publish_ecommerce_message: vi.fn(async () => undefined),
     publish_ecommerce_contact: vi.fn(async () => undefined),
     publish_ecommerce_read: vi.fn(async () => undefined),
+    publish_marketplace_read: vi.fn(),
+    publish_marketplace_read_all: vi.fn(),
     publish_notification_read: vi.fn(async () => undefined),
     publish_notifications_read_all: vi.fn(async () => undefined)
   };
@@ -860,6 +911,7 @@ function create_test_context(config_overrides: Partial<AppConfig> = {}) {
     logger: logger as unknown as AppLogger,
     chat_repository: chat_repository as unknown as ChatRepository,
     ecommerce_chat_repository: ecommerce_chat_repository as unknown as EcommerceChatRepository,
+    marketplace_chat_repository: marketplace_chat_repository as unknown as MarketplaceChatRepository,
     notification_repository: notification_repository as unknown as NotificationRepository,
     presence_service: presence_service as unknown as PresenceService,
     customer_rate_limiter: customer_rate_limiter as unknown as CustomerRateLimiter,
@@ -872,6 +924,7 @@ function create_test_context(config_overrides: Partial<AppConfig> = {}) {
     logger,
     chat_repository,
     ecommerce_chat_repository,
+    marketplace_chat_repository,
     notification_repository,
     presence_service,
     customer_rate_limiter,

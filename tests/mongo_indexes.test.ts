@@ -51,6 +51,14 @@ describe('MongoDB indexes', () => {
       'channel_1_store_id_1_visitor_id_1'
     ]));
 
+    const marketplace_message_index_names = indexes_by_collection
+      .get('integration_sale_messages')
+      ?.map((index) => index.name);
+    expect(marketplace_message_index_names).toEqual(expect.arrayContaining([
+      'store_id_1_channel_1_read_at_1_created_at_-1',
+      'store_channel_integration_read_created'
+    ]));
+
     const publication_receipt_index_names = indexes_by_collection
       .get('websocket_publication_result_receipts')
       ?.map((index) => index.name);

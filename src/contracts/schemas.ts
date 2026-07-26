@@ -212,6 +212,14 @@ export const ecommerce_chat_store_read_schema = z.object({
 
 export const ecommerce_chat_customer_read_schema = z.object({}).strict();
 
+export const marketplace_chat_read_schema = z.object({
+  conversation_key: z.string().trim().min(1).max(2048)
+}).strict();
+
+export type MarketplaceChatReadInput = z.infer<typeof marketplace_chat_read_schema>;
+
+export const marketplace_chat_read_all_schema = z.object({}).strict();
+
 export const NOTIFICATION_SYNC_LIMIT = 30;
 
 export const notification_sync_schema = z.object({

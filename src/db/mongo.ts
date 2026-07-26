@@ -128,6 +128,27 @@ export async function ensure_indexes(db: Db): Promise<void> {
         partialFilterExpression: { idempotency_key: { $exists: true } }
       }
     ]),
+    db.collection('integration_sale_messages').createIndexes([
+      {
+        key: {
+          store_id: 1,
+          channel: 1,
+          read_at: 1,
+          created_at: -1
+        },
+        name: 'store_id_1_channel_1_read_at_1_created_at_-1'
+      },
+      {
+        key: {
+          store_id: 1,
+          channel: 1,
+          integration_id: 1,
+          read_at: 1,
+          created_at: -1
+        },
+        name: 'store_channel_integration_read_created'
+      }
+    ]),
     db.collection('websocket_notifications').createIndexes([
       { key: { store_id: 1, created_at: -1 }, name: 'store_id_1_created_at_-1' },
       { key: { store_id: 1, _id: 1 }, name: 'store_id_1__id_1' },

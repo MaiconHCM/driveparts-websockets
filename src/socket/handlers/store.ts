@@ -8,6 +8,8 @@ import {
   ecommerce_chat_store_read_schema,
   ecommerce_chat_store_send_schema,
   ecommerce_chat_store_sync_schema,
+  marketplace_chat_read_all_schema,
+  marketplace_chat_read_schema,
   NOTIFICATION_SYNC_LIMIT,
   presence_sync_schema
 } from '../../contracts/schemas.js';
@@ -151,6 +153,11 @@ async function bootstrap_store_socket(
     identity.permissions,
     'ecommerce_chat_read'
   );
+  const can_read_marketplace = permission_allowed(
+    deps.config,
+    identity.permissions,
+    'marketplace_chat_read'
+  );
   const can_read_publications = permission_allowed(
     deps.config,
     identity.permissions,
@@ -192,6 +199,12 @@ async function bootstrap_store_socket(
   if (can_read_publications) {
     await socket.join(deps.realtime_gateway.join_publication_store_room(
       identity.store_id
+    ));
+  }
+  if (is_chat_attendant_role(user_role) && can_read_marketplace) {
+    await socket.join(deps.realtime_gateway.join_marketplace_store_attendant_room(
+      identity.store_id,
+      user_role
     ));
   }
 
@@ -605,6 +618,64 @@ function install_store_event_handlers(
     }
   });
 
+  register_socket_event(socket, tracker, 'marketplace_chat:read', is_ready, async (payload, ack) => {
+    if (!require_marketplace_store_access(identity.permissions, user_role, deps, ack)) {
+      return;
+    }
+
+    try {
+      const input = marketplace_chat_read_schema.parse(payload);
+      const read_result = await deps.marketplace_chat_repository.mark_conversation_read(
+        identity.store_id,
+        input.conversation_key
+      );
+      deps.realtime_gateway.publish_marketplace_read({
+        conversation_key: input.conversation_key,
+        store_id: identity.store_id,
+        read_at: read_result.read_at
+      });
+      send_ack(ack, ok_ack({
+        conversation_key: input.conversation_key,
+        updated_count: read_result.updated_count,
+        read_at: read_result.read_at.toISOString()
+      }));
+    } catch (err) {
+      await handle_handler_error(deps, err, ack, {
+        event_name: 'marketplace_chat:read',
+        invalid_payload_message: 'invalid_marketplace_chat_read_payload',
+        context,
+        map_domain_error: map_marketplace_domain_error
+      });
+    }
+  });
+
+  register_socket_event(socket, tracker, 'marketplace_chat:read_all', is_ready, async (payload, ack) => {
+    if (!require_marketplace_store_access(identity.permissions, user_role, deps, ack)) {
+      return;
+    }
+
+    try {
+      marketplace_chat_read_all_schema.parse(payload ?? {});
+      const read_result = await deps.marketplace_chat_repository.mark_all_read(
+        identity.store_id
+      );
+      deps.realtime_gateway.publish_marketplace_read_all({
+        store_id: identity.store_id,
+        read_at: read_result.read_at
+      });
+      send_ack(ack, ok_ack({
+        updated_count: read_result.updated_count,
+        read_at: read_result.read_at.toISOString()
+      }));
+    } catch (err) {
+      await handle_handler_error(deps, err, ack, {
+        event_name: 'marketplace_chat:read_all',
+        invalid_payload_message: 'invalid_marketplace_chat_read_all_payload',
+        context
+      });
+    }
+  });
+
   register_socket_event(socket, tracker, 'presence:sync', is_ready, async (payload, ack) => {
     if (!require_permission(
       deps.config,
@@ -735,6 +806,34 @@ function require_ecommerce_store_access(
       ? 'ecommerce_chat_send_not_allowed'
       : 'ecommerce_chat_read_not_allowed'
   );
+}
+
+function require_marketplace_store_access(
+  permissions: string[],
+  user_role: ChatUserRole,
+  deps: HandlerDependencies,
+  ack: AckCallback | undefined
+): user_role is 'master' | 'seller' {
+  if (!is_chat_attendant_role(user_role)) {
+    send_ack(ack, error_ack('forbidden', 'marketplace_chat_attendant_role_required'));
+    return false;
+  }
+
+  return require_permission(
+    deps.config,
+    permissions,
+    'marketplace_chat_read',
+    ack,
+    'marketplace_chat_read_not_allowed'
+  );
+}
+
+function map_marketplace_domain_error(err: unknown): AckResponse<never> | null {
+  if (err instanceof Error && err.message === 'invalid_marketplace_conversation_key') {
+    return error_ack('invalid_payload', err.message);
+  }
+
+  return null;
 }
 
 function map_chat_domain_error(err: unknown): AckResponse<never> | null {

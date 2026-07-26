@@ -7,6 +7,8 @@ import {
   ecommerce_chat_store_send_schema,
   internal_notification_schema,
   internal_publication_result_schema,
+  marketplace_chat_read_all_schema,
+  marketplace_chat_read_schema,
   notification_sync_schema,
   socket_jwt_payload_schema
 } from '../src/contracts/schemas.js';
@@ -88,6 +90,18 @@ describe('realtime contracts', () => {
     expect(notification_sync_schema.parse({ limit: 20 }).limit).toBe(20);
     expect(notification_sync_schema.parse({ limit: 50 }).limit).toBe(30);
     expect(() => notification_sync_schema.parse({ limit: 101 })).toThrow();
+  });
+
+  it('accepts only snake case marketplace read payloads', () => {
+    expect(marketplace_chat_read_schema.parse({
+      conversation_key: 'conversation_key_1'
+    })).toEqual({
+      conversation_key: 'conversation_key_1'
+    });
+    expect(marketplace_chat_read_all_schema.parse({})).toEqual({});
+    expect(() => marketplace_chat_read_schema.parse({
+      conversationKey: 'conversation_key_1'
+    })).toThrow();
   });
 
   it('keeps notification history and incremental cursors mutually exclusive', () => {
