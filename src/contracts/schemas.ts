@@ -116,13 +116,6 @@ export const chat_read_schema = z.object({
 
 export type ChatReadInput = z.infer<typeof chat_read_schema>;
 
-export const ecommerce_chat_customer_send_schema = z.object({
-  body: z.string().trim().min(1).max(20000),
-  client_message_id: optional_id_value
-}).strict();
-
-export type EcommerceChatCustomerSendInput = z.infer<typeof ecommerce_chat_customer_send_schema>;
-
 export const ecommerce_chat_customer_contact_schema = z.discriminatedUnion('contact_type', [
   z.object({
     contact_type: z.literal('email'),
@@ -130,11 +123,19 @@ export const ecommerce_chat_customer_contact_schema = z.discriminatedUnion('cont
   }).strict(),
   z.object({
     contact_type: z.literal('phone'),
-    contact_value: z.string().trim().regex(/^\+[1-9][0-9]{9,14}$/)
+    contact_value: z.string().trim().regex(/^\+55[1-9][0-9]9[0-9]{8}$/)
   }).strict()
 ]);
 
 export type EcommerceChatCustomerContactInput = z.infer<typeof ecommerce_chat_customer_contact_schema>;
+
+export const ecommerce_chat_customer_send_schema = z.object({
+  body: z.string().trim().min(1).max(20000),
+  client_message_id: optional_id_value,
+  customer_contact: ecommerce_chat_customer_contact_schema.optional()
+}).strict();
+
+export type EcommerceChatCustomerSendInput = z.infer<typeof ecommerce_chat_customer_send_schema>;
 
 export const ecommerce_chat_store_send_schema = z.object({
   conversation_id: object_id_value,

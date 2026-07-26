@@ -161,6 +161,7 @@ export class EcommerceChatRepository {
     if (conversation.status === 'closed') {
       throw new Error('ecommerce_conversation_closed');
     }
+    await this.synchronize_customer_contact(conversation, input);
 
     const now = new Date();
     const message_id = new ObjectId();
@@ -519,6 +520,39 @@ export class EcommerceChatRepository {
 
       throw error;
     }
+  }
+
+  private async synchronize_customer_contact(
+    conversation: EcommerceConversationDocument,
+    identity: Pick<CustomerIdentity, 'customer_email' | 'customer_phone'>
+  ): Promise<void> {
+    const contact_updates: {
+      customer_email?: string;
+      customer_phone?: string;
+      customer_contact_updated_at?: Date;
+      updated_at?: Date;
+    } = {};
+
+    if (identity.customer_email && identity.customer_email !== conversation.customer_email) {
+      contact_updates.customer_email = identity.customer_email;
+    }
+    if (identity.customer_phone && identity.customer_phone !== conversation.customer_phone) {
+      contact_updates.customer_phone = identity.customer_phone;
+    }
+    if (Object.keys(contact_updates).length === 0) {
+      return;
+    }
+
+    const contact_updated_at = new Date();
+    contact_updates.customer_contact_updated_at = contact_updated_at;
+    contact_updates.updated_at = contact_updated_at;
+    await this.conversations.updateOne(
+      {
+        _id: conversation._id,
+        status: { $ne: 'closed' }
+      },
+      { $set: contact_updates }
+    );
   }
 
   private async find_store_conversation(

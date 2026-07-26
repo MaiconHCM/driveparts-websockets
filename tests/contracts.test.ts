@@ -214,6 +214,10 @@ describe('realtime contracts', () => {
       contact_value: '(11) 99999-9999'
     })).toThrow();
     expect(() => ecommerce_chat_customer_contact_schema.parse({
+      contact_type: 'phone',
+      contact_value: '+551133333333'
+    })).toThrow();
+    expect(() => ecommerce_chat_customer_contact_schema.parse({
       contactType: 'email',
       contactValue: 'cliente@example.com'
     })).toThrow();
@@ -232,7 +236,11 @@ describe('realtime contracts', () => {
   it('keeps customer and store ecommerce message contracts separate', () => {
     const customer_payload = ecommerce_chat_customer_send_schema.parse({
       body: 'Esta peça ainda está disponível?',
-      client_message_id: 'customer_message_1'
+      client_message_id: 'customer_message_1',
+      customer_contact: {
+        contact_type: 'phone',
+        contact_value: '+5511999999999'
+      }
     });
     const store_payload = ecommerce_chat_store_send_schema.parse({
       conversation_id: '66a3b5688f9c5ee8d8f92a11',
@@ -241,10 +249,18 @@ describe('realtime contracts', () => {
     });
 
     expect(customer_payload.body).toContain('disponível');
+    expect(customer_payload.customer_contact?.contact_value).toBe('+5511999999999');
     expect(store_payload.conversation_id).toBe('66a3b5688f9c5ee8d8f92a11');
     expect(() => ecommerce_chat_customer_send_schema.parse({
       conversation_id: 'forged_conversation',
       body: 'teste'
+    })).toThrow();
+    expect(() => ecommerce_chat_customer_send_schema.parse({
+      body: 'teste',
+      customer_contact: {
+        contact_type: 'phone',
+        contact_value: '(11) 99999-9999'
+      }
     })).toThrow();
   });
 });

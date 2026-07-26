@@ -1,3 +1,4 @@
+import { ObjectId } from 'mongodb';
 import { describe, expect, it, vi } from 'vitest';
 import type { AppConfig } from '../src/config/app_config.js';
 import type { AppLogger } from '../src/config/logger.js';
@@ -6,7 +7,10 @@ import type {
   SocketWebsiteCustomerJwtPayload
 } from '../src/contracts/schemas.js';
 import type { ChatRepository } from '../src/repositories/chat_repository.js';
-import type { EcommerceChatRepository } from '../src/repositories/ecommerce_chat_repository.js';
+import type {
+  EcommerceChatRepository,
+  EcommerceMessageDocument
+} from '../src/repositories/ecommerce_chat_repository.js';
 import type { NotificationRepository } from '../src/repositories/notification_repository.js';
 import type {
   CustomerRateLimiter,
@@ -283,6 +287,94 @@ describe('Socket.IO handlers', () => {
     await tracker.drain();
   });
 
+  it('requires customer contact before consuming quota or creating the first message', async () => {
+    const test_context = create_test_context();
+    const socket = create_customer_socket();
+    const tracker = new SocketWorkTracker(8, test_context.deps.logger);
+
+    register_customer_socket(socket.as_authenticated(), test_context.deps, tracker);
+    await wait_for(() => socket.outbound.some((item) => item.event_name === 'connection:ready'));
+
+    const ack = vi.fn();
+    socket.receive('ecommerce_chat:send', { body: 'Olá' }, ack);
+    await wait_for(() => ack.mock.calls.length === 1);
+
+    expect(test_context.customer_rate_limiter.consume).not.toHaveBeenCalled();
+    expect(test_context.ecommerce_chat_repository.create_customer_message).not.toHaveBeenCalled();
+    expect(ack).toHaveBeenCalledWith({
+      ok: false,
+      error: {
+        code: 'contact_required',
+        message: 'ecommerce_customer_contact_required'
+      }
+    });
+    await tracker.drain();
+  });
+
+  it('uses the validated anonymous contact in the first customer message', async () => {
+    const test_context = create_test_context();
+    const message = create_ecommerce_message();
+    test_context.ecommerce_chat_repository.create_customer_message.mockResolvedValue(message);
+    const socket = create_customer_socket();
+    const tracker = new SocketWorkTracker(8, test_context.deps.logger);
+
+    register_customer_socket(socket.as_authenticated(), test_context.deps, tracker);
+    await wait_for(() => socket.outbound.some((item) => item.event_name === 'connection:ready'));
+
+    const ack = vi.fn();
+    socket.receive('ecommerce_chat:send', {
+      body: 'Esta peça está disponível?',
+      customer_contact: {
+        contact_type: 'phone',
+        contact_value: '+5511999999999'
+      }
+    }, ack);
+    await wait_for(() => ack.mock.calls.length === 1);
+
+    expect(test_context.ecommerce_chat_repository.create_customer_message)
+      .toHaveBeenCalledWith(expect.objectContaining({
+        customer_phone: '+5511999999999',
+        body: 'Esta peça está disponível?'
+      }));
+    expect(test_context.gateway.publish_ecommerce_message).toHaveBeenCalledWith(message);
+    expect(ack).toHaveBeenCalledWith(expect.objectContaining({ ok: true }));
+    await tracker.drain();
+  });
+
+  it('uses only the signed account contact when the customer is authenticated', async () => {
+    const test_context = create_test_context();
+    test_context.ecommerce_chat_repository.create_customer_message
+      .mockResolvedValue(create_ecommerce_message());
+    const socket = create_customer_socket({
+      customer_email: 'cliente@example.com'
+    });
+    const tracker = new SocketWorkTracker(8, test_context.deps.logger);
+
+    register_customer_socket(socket.as_authenticated(), test_context.deps, tracker);
+    await wait_for(() => socket.outbound.some((item) => item.event_name === 'connection:ready'));
+
+    const ack = vi.fn();
+    socket.receive('ecommerce_chat:send', {
+      body: 'Olá',
+      customer_contact: {
+        contact_type: 'phone',
+        contact_value: '+5511988888888'
+      }
+    }, ack);
+    await wait_for(() => ack.mock.calls.length === 1);
+
+    expect(test_context.ecommerce_chat_repository.create_customer_message)
+      .toHaveBeenCalledWith(expect.objectContaining({
+        customer_email: 'cliente@example.com'
+      }));
+    expect(test_context.ecommerce_chat_repository.create_customer_message)
+      .toHaveBeenCalledWith(expect.not.objectContaining({
+        customer_phone: expect.anything()
+      }));
+    expect(ack).toHaveBeenCalledWith(expect.objectContaining({ ok: true }));
+    await tracker.drain();
+  });
+
   it('marks all visible notifications and publishes the shared read time', async () => {
     const test_context = create_test_context();
     const read_at = new Date('2026-07-25T14:30:00.000Z');
@@ -332,7 +424,13 @@ describe('Socket.IO handlers', () => {
     await wait_for(() => socket.outbound.some((item) => item.event_name === 'connection:ready'));
 
     const ack = vi.fn();
-    socket.receive('ecommerce_chat:send', { body: 'Olá' }, ack);
+    socket.receive('ecommerce_chat:send', {
+      body: 'Olá',
+      customer_contact: {
+        contact_type: 'email',
+        contact_value: 'cliente@example.com'
+      }
+    }, ack);
     await wait_for(() => ack.mock.calls.length === 1);
 
     expect(test_context.ecommerce_chat_repository.create_customer_message).not.toHaveBeenCalled();
@@ -744,6 +842,21 @@ function create_customer_socket(
     ],
     ...overrides
   });
+}
+
+function create_ecommerce_message(): EcommerceMessageDocument {
+  return {
+    _id: new ObjectId('66a3b5688f9c5ee8d8f92a21'),
+    conversation_id: '66a3b5688f9c5ee8d8f92a20',
+    channel: 'e_commerce',
+    store_id: 'store_1',
+    visitor_id: 'visitor_1',
+    sender_type: 'website_customer',
+    sender_name: 'Visitante',
+    body: 'Olá',
+    status: 'sent',
+    created_at: new Date('2026-07-26T12:00:00.000Z')
+  };
 }
 
 function deferred<T>() {

@@ -298,6 +298,31 @@ describe('EcommerceChatRepository', () => {
     expect(conversations.insertOne).not.toHaveBeenCalled();
   });
 
+  it('persists a newly supplied contact on an existing customer conversation', async () => {
+    const { repository, conversations } = create_repository();
+    const conversation = create_conversation();
+    conversations.findOne.mockResolvedValue(conversation);
+
+    await repository.create_customer_message(create_customer_input({
+      customer_phone: '+5511999999999'
+    }));
+
+    expect(conversations.updateOne).toHaveBeenNthCalledWith(
+      1,
+      {
+        _id: conversation._id,
+        status: { $ne: 'closed' }
+      },
+      {
+        $set: {
+          customer_phone: '+5511999999999',
+          customer_contact_updated_at: expect.any(Date),
+          updated_at: expect.any(Date)
+        }
+      }
+    );
+  });
+
   it('rejects a customer idempotency key reused with a different body', async () => {
     const { repository, conversations, messages } = create_repository();
     messages.findOne.mockResolvedValue(create_message({

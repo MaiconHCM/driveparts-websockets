@@ -231,6 +231,11 @@ sincronização usam IDs Mongo como cursores; `before_message_id` e
 - `ecommerce_chat:sync`
 - `ecommerce_chat:read`
 
+`ecommerce_chat:send` exige um contato válido. Para visitantes anônimos, envie
+`customer_contact` com `contact_type` (`email` ou `phone`) e `contact_value`.
+Contas autenticadas podem usar `customer_email` ou `customer_phone` do JWT.
+O telefone é recebido no formato E.164, por exemplo `+5511999999999`.
+
 Envio e atualização de contato consomem a mesma cota por loja e visitante. O
 padrão é `10` operações a cada `60` segundos.
 

@@ -213,6 +213,34 @@ function install_customer_event_handlers(
         return;
       }
 
+      const can_update_contact = permission_allowed(
+        deps.config,
+        identity.permissions,
+        'ecommerce_chat_contact'
+      );
+      const has_identity_contact = Boolean(
+        identity.customer_email || identity.customer_phone
+      );
+      const customer_email = can_update_contact
+        ? identity.customer_email
+          ?? (!has_identity_contact && input.customer_contact?.contact_type === 'email'
+            ? input.customer_contact.contact_value
+            : undefined)
+        : undefined;
+      const customer_phone = can_update_contact
+        ? identity.customer_phone
+          ?? (!has_identity_contact && input.customer_contact?.contact_type === 'phone'
+            ? input.customer_contact.contact_value
+            : undefined)
+        : undefined;
+      if (!customer_email && !customer_phone) {
+        send_ack(ack, error_ack(
+          'contact_required',
+          'ecommerce_customer_contact_required'
+        ));
+        return;
+      }
+
       const quota = await deps.customer_rate_limiter.consume(
         identity.store_id,
         identity.visitor_id
@@ -224,16 +252,8 @@ function install_customer_event_handlers(
       const message = await deps.ecommerce_chat_repository.create_customer_message({
         visitor_id: identity.visitor_id,
         visitor_name: identity.visitor_name,
-        ...(permission_allowed(
-          deps.config,
-          identity.permissions,
-          'ecommerce_chat_contact'
-        ) && identity.customer_email ? { customer_email: identity.customer_email } : {}),
-        ...(permission_allowed(
-          deps.config,
-          identity.permissions,
-          'ecommerce_chat_contact'
-        ) && identity.customer_phone ? { customer_phone: identity.customer_phone } : {}),
+        ...(customer_email ? { customer_email } : {}),
+        ...(customer_phone ? { customer_phone } : {}),
         store_id: identity.store_id,
         store_name: identity.store_name,
         inventory_item_reference: build_inventory_item_reference(identity),
