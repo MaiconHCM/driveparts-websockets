@@ -164,6 +164,7 @@ export type ChatAttendanceThreadSummary = {
   responsible_label: string;
   is_pending_for_current_store: boolean;
   single_attendant_enabled: boolean;
+  unread_count: number;
 };
 
 type ListRecentAttendanceThreadsInput = {
@@ -368,14 +369,30 @@ export class ChatRepository {
       };
     }
 
-    const latest_messages = await this.messages
-      .find(query)
-      .sort({ _id: -1 })
-      .limit(input.limit + 1)
-      .toArray();
+    const [latest_messages, unread_messages] = await Promise.all([
+      this.messages
+        .find(query)
+        .sort({ _id: -1 })
+        .limit(input.limit + 1)
+        .toArray(),
+      !input.peer_store_id && !input.attendance_thread_id
+        ? this.messages
+          .find({
+            ...query,
+            recipient_store_id: input.store_id,
+            read_at: { $exists: false }
+          })
+          .sort({ _id: -1 })
+          .toArray()
+        : Promise.resolve([])
+    ]);
+    const merged_messages = merge_chat_messages_by_id([
+      ...latest_messages.slice(0, input.limit),
+      ...unread_messages
+    ]);
 
     return {
-      messages: await this.attach_thread_metadata(latest_messages.slice(0, input.limit).reverse()),
+      messages: await this.attach_thread_metadata(merged_messages),
       has_more: latest_messages.length > input.limit
     };
   }
@@ -408,11 +425,49 @@ export class ChatRepository {
       ];
     }
 
-    const threads = await this.threads
-      .find(query)
-      .sort({ updated_at: -1, _id: -1 })
-      .limit(input.limit)
-      .toArray();
+    const [latest_threads, unread_message_counts] = await Promise.all([
+      this.threads
+        .find(query)
+        .sort({ updated_at: -1, _id: -1 })
+        .limit(input.limit)
+        .toArray(),
+      this.messages.aggregate<{ _id: string; unread_count: number }>([
+        {
+          $match: {
+            recipient_store_id: input.store_id,
+            read_at: { $exists: false }
+          }
+        },
+        {
+          $group: {
+            _id: '$attendance_thread_id',
+            unread_count: { $sum: 1 }
+          }
+        }
+      ]).toArray()
+    ]);
+    const unread_counts_by_thread_id = new Map(
+      unread_message_counts.map((item) => [
+        String(item._id ?? '').trim(),
+        Math.max(0, Number(item.unread_count ?? 0))
+      ])
+    );
+    const unread_thread_object_ids = Array.from(unread_counts_by_thread_id.keys())
+      .filter((attendance_thread_id) => ObjectId.isValid(attendance_thread_id))
+      .map((attendance_thread_id) => new ObjectId(attendance_thread_id));
+    const unread_threads = unread_thread_object_ids.length > 0
+      ? await this.threads
+        .find({
+          ...query,
+          _id: { $in: unread_thread_object_ids }
+        })
+        .sort({ updated_at: -1, _id: -1 })
+        .toArray()
+      : [];
+    const threads = merge_chat_threads_by_id([
+      ...latest_threads,
+      ...unread_threads
+    ]);
     const responsibles = threads.flatMap(get_thread_responsibles);
     const disabled_single_attendant_store_ids = await this.list_disabled_single_attendant_store_ids(
       responsibles.map((responsible) => responsible.store_id)
@@ -451,7 +506,8 @@ export class ChatRepository {
           )
           : 'Atendimento compartilhado',
         is_pending_for_current_store: single_attendant_enabled && !current_store_responsible,
-        single_attendant_enabled
+        single_attendant_enabled,
+        unread_count: unread_counts_by_thread_id.get(thread._id.toHexString()) ?? 0
       };
     });
   }
@@ -1144,6 +1200,33 @@ function build_latest_thread_message_fields(input: {
       ]
     }
   };
+}
+
+function merge_chat_messages_by_id(messages: ChatMessageDocument[]): ChatMessageDocument[] {
+  const messages_by_id = new Map<string, ChatMessageDocument>();
+  messages.forEach((message) => {
+    messages_by_id.set(message._id.toHexString(), message);
+  });
+
+  return Array.from(messages_by_id.values()).sort(
+    (left, right) => left._id.toHexString().localeCompare(right._id.toHexString())
+  );
+}
+
+function merge_chat_threads_by_id(
+  threads: ChatConversationDocument[]
+): ChatConversationDocument[] {
+  const threads_by_id = new Map<string, ChatConversationDocument>();
+  threads.forEach((thread) => {
+    threads_by_id.set(thread._id.toHexString(), thread);
+  });
+
+  return Array.from(threads_by_id.values()).sort((left, right) => {
+    const updated_at_difference = right.updated_at.getTime() - left.updated_at.getTime();
+    return updated_at_difference !== 0
+      ? updated_at_difference
+      : right._id.toHexString().localeCompare(left._id.toHexString());
+  });
 }
 
 function session_options(session: ClientSession | undefined) {

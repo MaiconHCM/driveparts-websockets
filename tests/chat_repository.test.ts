@@ -24,6 +24,7 @@ function create_mock_collection() {
   return {
     findOne: vi.fn(async (_filter?: unknown, _options?: unknown) => null as unknown),
     find: vi.fn((_filter?: unknown, _options?: unknown) => create_mock_cursor<unknown>([])),
+    aggregate: vi.fn((_pipeline?: unknown) => create_mock_cursor<unknown>([])),
     insertOne: vi.fn(async (_document?: unknown, _options?: unknown) => ({ acknowledged: true })),
     updateOne: vi.fn(async (_filter?: unknown, _update?: unknown, _options?: unknown) => ({
       acknowledged: true,
@@ -574,9 +575,48 @@ describe('ChatRepository message concurrency', () => {
         peer_store: { store_id: 'store_b' },
         last_message_preview: 'Mensagem recente',
         responsible_label: 'Resp.: Seller A',
-        is_pending_for_current_store: false
+        is_pending_for_current_store: false,
+        unread_count: 0
       })
     ]);
+  });
+
+  it('keeps every unread attendance thread outside the recent limit', async () => {
+    const { repository, settings, threads, messages } = create_repository();
+    const recent_thread = create_thread({
+      last_message_id: 'message_recent',
+      last_message_at: new Date('2026-07-26T12:00:00.000Z'),
+      updated_at: new Date('2026-07-26T12:00:00.000Z')
+    });
+    const unread_thread = create_thread({
+      _id: new ObjectId('66a3b5688f9c5ee8d8f92a12'),
+      last_message_id: 'message_unread',
+      last_message_preview: 'Mensagem antiga não lida',
+      last_message_at: new Date('2026-07-20T12:00:00.000Z'),
+      updated_at: new Date('2026-07-20T12:00:00.000Z')
+    });
+    settings.findOne.mockResolvedValue(null);
+    settings.find.mockReturnValue(create_mock_cursor([]));
+    threads.find
+      .mockReturnValueOnce(create_mock_cursor([recent_thread]))
+      .mockReturnValueOnce(create_mock_cursor([unread_thread]));
+    messages.aggregate.mockReturnValue(create_mock_cursor([{
+      _id: unread_thread._id.toHexString(),
+      unread_count: 3
+    }]));
+
+    const summaries = await repository.list_recent_attendance_threads({
+      store_id: 'store_a',
+      user_id: 'seller_a',
+      user_role: 'seller',
+      limit: 1
+    });
+
+    expect(summaries).toHaveLength(2);
+    expect(summaries[1]).toMatchObject({
+      attendance_thread_id: unread_thread._id.toHexString(),
+      unread_count: 3
+    });
   });
 
   it('aborts the transaction when a concurrent close makes the guarded thread update miss', async () => {

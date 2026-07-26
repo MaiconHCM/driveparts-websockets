@@ -42,17 +42,18 @@ Durante o encerramento, rotas não-health retornam `503` antes de autenticação
 parsing ou persistência; `/health/live` permanece ativo e `/health/ready` retorna
 `503` com `status=shutting_down`.
 
-### Notificações de inbox do marketplace
+### Notificações do marketplace
 
-A queue envia mensagens e perguntas recebidas pelo
-`POST /internal/notifications`. O contrato específico do Mercado Livre usa:
+A queue envia mensagens e perguntas recebidas, e o DriveParts envia novas
+vendas, pelo `POST /internal/notifications`:
 
-| Contato recebido | `type` | `entity` |
+| Evento | `type` | `entity` |
 | --- | --- | --- |
 | Mensagem de uma venda | `marketplace_message_received` | `integration_sale_message` |
 | Pergunta em um anúncio | `marketplace_question_received` | `integration_question` |
+| Nova venda processada | `marketplace_sale_created` | `sale` |
 
-Nos dois casos, `source` é `mercado_livre_brasil` e `channel` é
+Para mensagens e perguntas do Mercado Livre, `source` e `channel` usam
 `mercado_libre_brasil`. Exemplo:
 
 ```json

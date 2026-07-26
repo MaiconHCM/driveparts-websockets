@@ -501,7 +501,8 @@ describe('Socket.IO handlers', () => {
       attendance_responsibles: [],
       responsible_label: 'Pendente',
       is_pending_for_current_store: true,
-      single_attendant_enabled: true
+      single_attendant_enabled: true,
+      unread_count: 2
     }]);
     const socket = create_store_socket();
     const tracker = new SocketWorkTracker(8, test_context.deps.logger);

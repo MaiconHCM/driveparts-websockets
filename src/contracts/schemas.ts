@@ -229,7 +229,8 @@ export const internal_notification_schema = z.object({
     'listing_error',
     'attendance_transfer',
     'marketplace_message_received',
-    'marketplace_question_received'
+    'marketplace_question_received',
+    'marketplace_sale_created'
   ]),
   severity: z.enum(['info', 'warning', 'error']).default('info'),
   source: z.enum(['driveparts', 'mercado_livre_brasil', 'shopee', 'google_merchant', 'system']).default('driveparts'),
@@ -239,7 +240,8 @@ export const internal_notification_schema = z.object({
     'integration',
     'attendance_thread',
     'integration_sale_message',
-    'integration_question'
+    'integration_question',
+    'sale'
   ]).default('listing'),
   title: non_empty_text.max(160),
   message: non_empty_text.max(2000),

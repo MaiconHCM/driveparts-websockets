@@ -338,11 +338,37 @@ export class EcommerceChatRepository {
   }
 
   async list_store_conversations(store_id: string, limit: number): Promise<EcommerceConversationDocument[]> {
-    return this.conversations
-      .find({ store_id })
-      .sort({ last_message_at: -1, updated_at: -1, _id: -1 })
-      .limit(limit)
-      .toArray();
+    const [latest_conversations, pending_conversations] = await Promise.all([
+      this.conversations
+        .find({ store_id })
+        .sort({ last_message_at: -1, updated_at: -1, _id: -1 })
+        .limit(limit)
+        .toArray(),
+      this.conversations
+        .find({
+          store_id,
+          status: { $ne: 'closed' },
+          $or: [
+            { unread_store_count: { $gt: 0 } },
+            { last_message_sender_type: 'website_customer' }
+          ]
+        })
+        .sort({ last_message_at: -1, updated_at: -1, _id: -1 })
+        .toArray()
+    ]);
+    const conversations_by_id = new Map<string, EcommerceConversationDocument>();
+    [...latest_conversations, ...pending_conversations].forEach((conversation) => {
+      conversations_by_id.set(conversation._id.toHexString(), conversation);
+    });
+
+    return Array.from(conversations_by_id.values()).sort((left, right) => {
+      const left_activity_at = left.last_message_at ?? left.updated_at;
+      const right_activity_at = right.last_message_at ?? right.updated_at;
+      const activity_difference = right_activity_at.getTime() - left_activity_at.getTime();
+      return activity_difference !== 0
+        ? activity_difference
+        : right._id.toHexString().localeCompare(left._id.toHexString());
+    });
   }
 
   async synchronize_customer_identity(

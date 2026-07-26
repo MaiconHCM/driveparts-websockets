@@ -73,7 +73,8 @@ export function serialize_attendance_thread(thread: ChatAttendanceThreadSummary)
     })),
     responsible_label: thread.responsible_label,
     is_pending_for_current_store: thread.is_pending_for_current_store,
-    single_attendant_enabled: thread.single_attendant_enabled
+    single_attendant_enabled: thread.single_attendant_enabled,
+    unread_count: thread.unread_count
   };
 }
 

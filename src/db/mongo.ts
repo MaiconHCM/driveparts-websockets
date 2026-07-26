@@ -97,6 +97,14 @@ export async function ensure_indexes(db: Db): Promise<void> {
         name: 'store_id_1_last_message_at_-1_updated_at_-1__id_-1'
       },
       {
+        key: { store_id: 1, last_message_sender_type: 1, last_message_at: -1 },
+        name: 'store_id_1_last_message_sender_type_1_last_message_at_-1'
+      },
+      {
+        key: { store_id: 1, unread_store_count: -1, last_message_at: -1 },
+        name: 'store_id_1_unread_store_count_-1_last_message_at_-1'
+      },
+      {
         key: { channel: 1, store_id: 1, visitor_id: 1 },
         unique: true,
         name: 'channel_1_store_id_1_visitor_id_1'
@@ -130,10 +138,26 @@ export async function ensure_indexes(db: Db): Promise<void> {
         name: 'store_id_1_user_id_1_read_at_1__id_1'
       },
       {
+        key: {
+          store_id: 1,
+          type: 1,
+          integration_id: 1,
+          'data.external_question_id': 1,
+          created_at: -1
+        },
+        name: 'store_id_1_type_1_integration_id_1_data_external_question_id_1_created_at_-1'
+      },
+      {
         key: { store_id: 1, idempotency_key: 1 },
         unique: true,
         name: 'store_id_1_idempotency_key_1',
         partialFilterExpression: { idempotency_key: { $exists: true } }
+      }
+    ]),
+    db.collection('integration_questions').createIndexes([
+      {
+        key: { store_id: 1, 'raw_data.status': 1, created_at: -1 },
+        name: 'store_id_1_raw_data_status_1_created_at_-1'
       }
     ]),
     db.collection('websocket_publication_result_receipts').createIndexes([

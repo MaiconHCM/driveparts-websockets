@@ -107,6 +107,11 @@ describe('realtime contracts', () => {
       type: 'marketplace_question_received',
       entity: 'integration_question',
       title: 'Nova pergunta no marketplace'
+    },
+    {
+      type: 'marketplace_sale_created',
+      entity: 'sale',
+      title: 'Nova venda no marketplace'
     }
   ] as const)('accepts persisted marketplace inbox notification type $type', (notification) => {
     const payload = internal_notification_schema.parse({

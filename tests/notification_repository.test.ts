@@ -6,6 +6,17 @@ import {
   type NotificationDocument
 } from '../src/repositories/notification_repository.js';
 
+function create_mock_cursor<T>(documents: T[]) {
+  const cursor = {
+    sort: vi.fn(),
+    limit: vi.fn(),
+    toArray: vi.fn(async () => documents)
+  };
+  cursor.sort.mockReturnValue(cursor);
+  cursor.limit.mockReturnValue(cursor);
+  return cursor;
+}
+
 function create_notification(
   overrides: Partial<NotificationDocument> = {}
 ): NotificationDocument {
@@ -28,6 +39,7 @@ function create_notification(
 function create_repository() {
   const collection = {
     findOne: vi.fn(async () => null as NotificationDocument | null),
+    find: vi.fn((_filter?: unknown, _options?: unknown) => create_mock_cursor<unknown>([])),
     findOneAndUpdate: vi.fn(async () => null as NotificationDocument | null),
     updateMany: vi.fn(async () => ({ acknowledged: true, modifiedCount: 0 })),
     updateOne: vi.fn(async () => ({
@@ -37,13 +49,17 @@ function create_repository() {
     })),
     insertOne: vi.fn(async () => ({ acknowledged: true }))
   };
+  const questions = {
+    find: vi.fn((_filter?: unknown, _options?: unknown) => create_mock_cursor<unknown>([]))
+  };
   const db = {
-    collection: vi.fn(() => collection)
+    collection: vi.fn((name: string) => name === 'integration_questions' ? questions : collection)
   } as unknown as Db;
 
   return {
     repository: new NotificationRepository(db),
-    collection
+    collection,
+    questions
   };
 }
 
@@ -306,5 +322,73 @@ describe('NotificationRepository', () => {
       },
       { $set: { read_at: result.read_at } }
     );
+  });
+
+  it('keeps all unread and unanswered-question notifications outside the recent limit', async () => {
+    const { repository, collection, questions } = create_repository();
+    const recent = create_notification({
+      _id: new ObjectId('66a3b5688f9c5ee8d8f92a11'),
+      read_at: new Date('2026-07-26T12:01:00.000Z')
+    });
+    const unread = create_notification({
+      _id: new ObjectId('66a3b5688f9c5ee8d8f92a12'),
+      idempotency_key: 'event_2'
+    });
+    const pending_question = create_notification({
+      _id: new ObjectId('66a3b5688f9c5ee8d8f92a13'),
+      type: 'marketplace_question_received',
+      entity: 'integration_question',
+      integration_id: 'integration_1',
+      idempotency_key: 'marketplace_question:question_1',
+      data: {
+        external_question_id: 'question_1'
+      },
+      read_at: new Date('2026-07-25T12:05:00.000Z')
+    });
+    collection.find
+      .mockReturnValueOnce(create_mock_cursor([recent]))
+      .mockReturnValueOnce(create_mock_cursor([unread]))
+      .mockReturnValueOnce(create_mock_cursor([pending_question]));
+    questions.find.mockReturnValue(create_mock_cursor([{
+      _id: new ObjectId('66a3b5688f9c5ee8d8f92a14'),
+      store_id: 'store_1',
+      integration_id: 'integration_1',
+      external_id: 'question_1',
+      raw_data: {
+        status: 'unanswered'
+      }
+    }]));
+
+    const notifications = await repository.list_notifications({
+      store_id: 'store_1',
+      user_id: 'user_1',
+      unread_only: false,
+      limit: 1
+    });
+
+    expect(notifications.map((notification) => notification._id.toHexString())).toEqual([
+      recent._id.toHexString(),
+      unread._id.toHexString(),
+      pending_question._id.toHexString()
+    ]);
+    expect(collection.find.mock.calls[2]?.[0]).toMatchObject({
+      store_id: 'store_1',
+      $and: [
+        {
+          $or: [
+            { user_id: { $exists: false } },
+            { user_id: 'user_1' }
+          ]
+        },
+        {
+          $or: [
+            expect.objectContaining({
+              type: 'marketplace_question_received',
+              integration_id: 'integration_1'
+            })
+          ]
+        }
+      ]
+    });
   });
 });

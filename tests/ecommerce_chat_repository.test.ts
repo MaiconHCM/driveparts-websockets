@@ -243,6 +243,40 @@ function is_record(value: unknown): value is Record<string, unknown> {
 }
 
 describe('EcommerceChatRepository', () => {
+  it('keeps every conversation awaiting a store response outside the recent limit', async () => {
+    const { repository, conversations } = create_repository();
+    const recent_conversation = create_conversation({
+      last_message_sender_type: 'store_user',
+      last_message_at: new Date('2026-07-26T12:00:00.000Z'),
+      updated_at: new Date('2026-07-26T12:00:00.000Z')
+    });
+    const pending_conversation = create_conversation({
+      _id: new ObjectId('66a3b5688f9c5ee8d8f92a22'),
+      visitor_id: 'visitor_2',
+      last_message_sender_type: 'website_customer',
+      last_message_at: new Date('2026-07-20T12:00:00.000Z'),
+      updated_at: new Date('2026-07-20T12:00:00.000Z')
+    });
+    conversations.find
+      .mockReturnValueOnce(create_mock_cursor([recent_conversation]))
+      .mockReturnValueOnce(create_mock_cursor([pending_conversation]));
+
+    const result = await repository.list_store_conversations('store_1', 1);
+
+    expect(result.map((conversation) => conversation._id.toHexString())).toEqual([
+      recent_conversation._id.toHexString(),
+      pending_conversation._id.toHexString()
+    ]);
+    expect(conversations.find.mock.calls[1]?.[0]).toEqual({
+      store_id: 'store_1',
+      status: { $ne: 'closed' },
+      $or: [
+        { unread_store_count: { $gt: 0 } },
+        { last_message_sender_type: 'website_customer' }
+      ]
+    });
+  });
+
   it('builds collision-safe canonical keys for legacy-colliding identities', async () => {
     const first = create_repository();
     const second = create_repository();

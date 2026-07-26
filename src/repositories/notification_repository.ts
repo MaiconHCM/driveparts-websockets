@@ -11,7 +11,8 @@ export type NotificationDocument = {
     | 'listing_error'
     | 'attendance_transfer'
     | 'marketplace_message_received'
-    | 'marketplace_question_received';
+    | 'marketplace_question_received'
+    | 'marketplace_sale_created';
   severity: 'info' | 'warning' | 'error';
   source: 'driveparts' | 'mercado_livre_brasil' | 'shopee' | 'google_merchant' | 'system';
   entity:
@@ -20,7 +21,8 @@ export type NotificationDocument = {
     | 'integration'
     | 'attendance_thread'
     | 'integration_sale_message'
-    | 'integration_question';
+    | 'integration_question'
+    | 'sale';
   title: string;
   message: string;
   created_at: Date;
@@ -66,11 +68,23 @@ type ListNotificationsInput = {
   limit: number;
 };
 
+type PendingIntegrationQuestionDocument = {
+  _id: ObjectId;
+  store_id: string;
+  integration_id: string;
+  external_id: string;
+  raw_data?: {
+    status?: string;
+  };
+};
+
 export class NotificationRepository {
   private readonly notifications: Collection<NotificationDocument>;
+  private readonly integration_questions: Collection<PendingIntegrationQuestionDocument>;
 
   constructor(db: Db) {
     this.notifications = db.collection<NotificationDocument>('websocket_notifications');
+    this.integration_questions = db.collection<PendingIntegrationQuestionDocument>('integration_questions');
   }
 
   async create_notification(input: InternalNotificationInput): Promise<NotificationDocument> {
@@ -163,17 +177,17 @@ export class NotificationRepository {
   }
 
   async list_notifications(input: ListNotificationsInput): Promise<NotificationDocument[]> {
-    const query: Filter<NotificationDocument> = {
+    const visibility_query: Filter<NotificationDocument> = {
       store_id: input.store_id,
       $or: build_notification_visibility_conditions(input.user_id)
     };
 
-    if (input.unread_only) {
-      query.read_at = { $exists: false };
-    }
-
     if (input.after_notification_id && ObjectId.isValid(input.after_notification_id)) {
-      query._id = { $gt: new ObjectId(input.after_notification_id) };
+      const query: Filter<NotificationDocument> = {
+        ...visibility_query,
+        _id: { $gt: new ObjectId(input.after_notification_id) },
+        ...(input.unread_only ? { read_at: { $exists: false } } : {})
+      };
 
       return this.notifications
         .find(query)
@@ -182,13 +196,34 @@ export class NotificationRepository {
         .toArray();
     }
 
-    const latest = await this.notifications
-      .find(query)
-      .sort({ _id: -1 })
-      .limit(input.limit)
-      .toArray();
+    const [latest, unread, pending_questions] = await Promise.all([
+      input.unread_only
+        ? Promise.resolve([])
+        : this.notifications
+          .find(visibility_query)
+          .sort({ _id: -1 })
+          .limit(input.limit)
+          .toArray(),
+      this.notifications
+        .find({
+          ...visibility_query,
+          read_at: { $exists: false }
+        })
+        .sort({ _id: -1 })
+        .toArray(),
+      input.unread_only
+        ? Promise.resolve([])
+        : this.list_pending_question_notifications(
+          input.store_id,
+          input.user_id
+        )
+    ]);
 
-    return latest.reverse();
+    return merge_notifications_by_id([
+      ...latest,
+      ...unread,
+      ...pending_questions
+    ]);
   }
 
   async mark_read(
@@ -248,6 +283,85 @@ export class NotificationRepository {
       read_at
     };
   }
+
+  private async list_pending_question_notifications(
+    store_id: string,
+    user_id: string
+  ): Promise<NotificationDocument[]> {
+    const pending_questions = await this.integration_questions
+      .find(
+        {
+          store_id,
+          'raw_data.status': 'unanswered'
+        },
+        {
+          projection: {
+            _id: 1,
+            integration_id: 1,
+            external_id: 1
+          }
+        }
+      )
+      .sort({ _id: -1 })
+      .toArray();
+    const notification_identity_queries = pending_questions
+      .map((question): Filter<NotificationDocument> | null => {
+        const integration_id = String(question.integration_id ?? '').trim();
+        const external_id = String(question.external_id ?? '').trim();
+        if (integration_id === '' || external_id === '') {
+          return null;
+        }
+
+        return {
+          type: 'marketplace_question_received',
+          integration_id,
+          'data.external_question_id': external_id
+        };
+      })
+      .filter((query): query is Filter<NotificationDocument> => query !== null);
+
+    if (notification_identity_queries.length === 0) {
+      return [];
+    }
+
+    const visibility_conditions = build_notification_visibility_conditions(user_id);
+    const query_batches = chunk(notification_identity_queries, 200);
+    const results = await Promise.all(query_batches.map((identity_queries) => (
+      this.notifications
+        .find({
+          store_id,
+          $and: [
+            { $or: visibility_conditions },
+            { $or: identity_queries }
+          ]
+        })
+        .sort({ _id: -1 })
+        .toArray()
+    )));
+
+    return merge_notifications_by_id(results.flat());
+  }
+}
+
+function merge_notifications_by_id(
+  notifications: NotificationDocument[]
+): NotificationDocument[] {
+  const notifications_by_id = new Map<string, NotificationDocument>();
+  notifications.forEach((notification) => {
+    notifications_by_id.set(notification._id.toHexString(), notification);
+  });
+
+  return Array.from(notifications_by_id.values()).sort(
+    (left, right) => left._id.toHexString().localeCompare(right._id.toHexString())
+  );
+}
+
+function chunk<T>(values: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let index = 0; index < values.length; index += size) {
+    chunks.push(values.slice(index, index + size));
+  }
+  return chunks;
 }
 
 function build_notification_visibility_conditions(user_id: string): Filter<NotificationDocument>[] {
