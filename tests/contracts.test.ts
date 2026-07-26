@@ -86,7 +86,8 @@ describe('realtime contracts', () => {
   it('bounds notification synchronization to thirty records', () => {
     expect(notification_sync_schema.parse({}).limit).toBe(30);
     expect(notification_sync_schema.parse({ limit: 20 }).limit).toBe(20);
-    expect(() => notification_sync_schema.parse({ limit: 31 })).toThrow();
+    expect(notification_sync_schema.parse({ limit: 50 }).limit).toBe(30);
+    expect(() => notification_sync_schema.parse({ limit: 101 })).toThrow();
   });
 
   it('accepts listing notification payload', () => {

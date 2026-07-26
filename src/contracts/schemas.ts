@@ -217,7 +217,12 @@ export const NOTIFICATION_SYNC_LIMIT = 30;
 export const notification_sync_schema = z.object({
   after_notification_id: optional_object_id_value,
   unread_only: z.boolean().default(false),
-  limit: z.number().int().min(1).max(NOTIFICATION_SYNC_LIMIT).default(NOTIFICATION_SYNC_LIMIT)
+  limit: z.number()
+    .int()
+    .min(1)
+    .max(100)
+    .default(NOTIFICATION_SYNC_LIMIT)
+    .transform((limit) => Math.min(limit, NOTIFICATION_SYNC_LIMIT))
 }).strict();
 
 export type NotificationSyncInput = z.infer<typeof notification_sync_schema>;
