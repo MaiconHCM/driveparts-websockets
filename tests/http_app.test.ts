@@ -8,9 +8,10 @@ import { load_config, type AppConfig } from '../src/config/app_config.js';
 import { create_logger } from '../src/config/logger.js';
 import { create_http_app } from '../src/http/app.js';
 import type { ChatRepository } from '../src/repositories/chat_repository.js';
-import type {
-  NotificationDocument,
-  NotificationRepository
+import {
+  NotificationIdempotencyConflictError,
+  type NotificationDocument,
+  type NotificationRepository
 } from '../src/repositories/notification_repository.js';
 import type {
   InventoryItemIntegrationSnapshot,
@@ -198,6 +199,177 @@ describe('HTTP application', () => {
       ok: false,
       status: 'shutting_down'
     });
+  });
+
+  it('persists and publishes a new marketplace inbox notification', async () => {
+    const notification = marketplace_notification();
+    const create_notification_with_result = vi.fn().mockResolvedValue({
+      notification,
+      created: true,
+      realtime_published: false
+    });
+    const mark_realtime_published = vi.fn().mockResolvedValue(true);
+    const publish_notification = vi.fn();
+    const server = await start_app({
+      notification_repository: {
+        create_notification_with_result,
+        mark_realtime_published
+      } as unknown as NotificationRepository,
+      realtime_gateway: {
+        publish_notification
+      } as unknown as RealtimeGateway
+    });
+
+    const response = await post_notification(server.url, marketplace_notification_payload());
+
+    expect(response.status).toBe(202);
+    expect(await response.json()).toMatchObject({
+      ok: true,
+      suppressed: false,
+      notification: {
+        notification_id: notification._id.toHexString(),
+        type: 'marketplace_message_received',
+        source: 'mercado_livre_brasil',
+        entity: 'integration_sale_message',
+        channel: 'mercado_libre_brasil'
+      }
+    });
+    expect(create_notification_with_result).toHaveBeenCalledWith(
+      marketplace_notification_payload()
+    );
+    expect(publish_notification).toHaveBeenCalledWith(notification);
+    expect(mark_realtime_published).toHaveBeenCalledWith(notification);
+    expect(publish_notification.mock.invocationCallOrder[0])
+      .toBeLessThan(mark_realtime_published.mock.invocationCallOrder[0]!);
+  });
+
+  it('suppresses realtime emission for an identical notification duplicate', async () => {
+    const notification = marketplace_notification({
+      realtime_published_at: new Date('2026-07-26T12:01:00.000Z')
+    });
+    const create_notification_with_result = vi.fn().mockResolvedValue({
+      notification,
+      created: false,
+      realtime_published: true
+    });
+    const mark_realtime_published = vi.fn();
+    const publish_notification = vi.fn();
+    const server = await start_app({
+      notification_repository: {
+        create_notification_with_result,
+        mark_realtime_published
+      } as unknown as NotificationRepository,
+      realtime_gateway: {
+        publish_notification
+      } as unknown as RealtimeGateway
+    });
+
+    const response = await post_notification(server.url, marketplace_notification_payload());
+
+    expect(response.status).toBe(202);
+    const body = await response.json() as Record<string, unknown>;
+    expect(body).toMatchObject({
+      ok: true,
+      suppressed: true,
+      notification: {
+        notification_id: notification._id.toHexString()
+      }
+    });
+    expect(body.notification).not.toHaveProperty('realtime_published_at');
+    expect(publish_notification).not.toHaveBeenCalled();
+    expect(mark_realtime_published).not.toHaveBeenCalled();
+  });
+
+  it('retries an unpublished notification after fan-out fails, then suppresses later retries', async () => {
+    const notification = marketplace_notification();
+    let realtime_published = false;
+    let create_attempt = 0;
+    const create_notification_with_result = vi.fn(async () => ({
+      notification,
+      created: create_attempt++ === 0,
+      realtime_published
+    }));
+    const publish_notification = vi.fn()
+      .mockRejectedValueOnce(new Error('socket_fanout_failed'))
+      .mockResolvedValue(undefined);
+    const mark_realtime_published = vi.fn(async () => {
+      realtime_published = true;
+      notification.realtime_published_at = new Date('2026-07-26T12:01:00.000Z');
+      return true;
+    });
+    const server = await start_app({
+      notification_repository: {
+        create_notification_with_result,
+        mark_realtime_published
+      } as unknown as NotificationRepository,
+      realtime_gateway: {
+        publish_notification
+      } as unknown as RealtimeGateway
+    });
+
+    const failed_response = await post_notification(
+      server.url,
+      marketplace_notification_payload()
+    );
+    const recovery_response = await post_notification(
+      server.url,
+      marketplace_notification_payload()
+    );
+    const duplicate_response = await post_notification(
+      server.url,
+      marketplace_notification_payload()
+    );
+
+    expect(failed_response.status).toBe(500);
+    expect(await failed_response.json()).toMatchObject({
+      ok: false,
+      error: {
+        code: 'internal_error'
+      }
+    });
+    expect(recovery_response.status).toBe(202);
+    expect(await recovery_response.json()).toMatchObject({
+      ok: true,
+      suppressed: false
+    });
+    expect(duplicate_response.status).toBe(202);
+    const duplicate_body = await duplicate_response.json() as Record<string, unknown>;
+    expect(duplicate_body).toMatchObject({
+      ok: true,
+      suppressed: true
+    });
+    expect(duplicate_body.notification).not.toHaveProperty('realtime_published_at');
+    expect(create_notification_with_result).toHaveBeenCalledTimes(3);
+    expect(publish_notification).toHaveBeenCalledTimes(2);
+    expect(mark_realtime_published).toHaveBeenCalledOnce();
+  });
+
+  it('keeps returning 409 when a notification idempotency key conflicts', async () => {
+    const publish_notification = vi.fn();
+    const server = await start_app({
+      notification_repository: {
+        create_notification_with_result: vi.fn().mockRejectedValue(
+          new NotificationIdempotencyConflictError()
+        )
+      } as unknown as NotificationRepository,
+      realtime_gateway: {
+        publish_notification
+      } as unknown as RealtimeGateway
+    });
+
+    const response = await post_notification(server.url, marketplace_notification_payload({
+      message: 'Payload conflitante.'
+    }));
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({
+      ok: false,
+      error: {
+        code: 'conflict',
+        message: 'notification_idempotency_conflict'
+      }
+    });
+    expect(publish_notification).not.toHaveBeenCalled();
   });
 
   it('publishes an authoritative active result without persisting a notification', async () => {
@@ -609,6 +781,48 @@ function publication_payload(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function marketplace_notification_payload(overrides: Record<string, unknown> = {}) {
+  return {
+    idempotency_key: 'marketplace_message:message_1',
+    store_id: 'store_1',
+    type: 'marketplace_message_received',
+    severity: 'info',
+    source: 'mercado_livre_brasil',
+    entity: 'integration_sale_message',
+    channel: 'mercado_libre_brasil',
+    title: 'Nova mensagem no marketplace',
+    message: 'Você recebeu uma nova mensagem.',
+    integration_id: 'integration_1',
+    data: {
+      external_message_id: 'message_1'
+    },
+    ...overrides
+  };
+}
+
+function marketplace_notification(
+  overrides: Partial<NotificationDocument> = {}
+): NotificationDocument {
+  return {
+    _id: new ObjectId('66a3b5688f9c5ee8d8f92a12'),
+    idempotency_key: 'marketplace_message:message_1',
+    store_id: 'store_1',
+    type: 'marketplace_message_received',
+    severity: 'info',
+    source: 'mercado_livre_brasil',
+    entity: 'integration_sale_message',
+    channel: 'mercado_libre_brasil',
+    title: 'Nova mensagem no marketplace',
+    message: 'Você recebeu uma nova mensagem.',
+    integration_id: 'integration_1',
+    data: {
+      external_message_id: 'message_1'
+    },
+    created_at: new Date('2026-07-26T12:00:00.000Z'),
+    ...overrides
+  };
+}
+
 function publication_snapshot(
   overrides: Partial<InventoryItemIntegrationSnapshot> = {}
 ): InventoryItemIntegrationSnapshot {
@@ -628,6 +842,17 @@ function publication_snapshot(
 
 async function post_publication_result(url: string, payload: Record<string, unknown>) {
   return fetch(`${url}/internal/publication-results`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'x-internal-token': 'test_internal_token'
+    },
+    body: JSON.stringify(payload)
+  });
+}
+
+async function post_notification(url: string, payload: Record<string, unknown>) {
+  return fetch(`${url}/internal/notifications`, {
     method: 'POST',
     headers: {
       'content-type': 'application/json',

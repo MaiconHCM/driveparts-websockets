@@ -159,13 +159,23 @@ export function create_http_app(deps: AppDependencies) {
       try {
         assert_payload_keys_are_snake_case(request.body);
         const input = internal_notification_schema.parse(request.body);
-        const notification = await deps.notification_repository.create_notification(input);
+        const result = await deps.notification_repository.create_notification_with_result(input);
+        const suppressed = result.realtime_published;
 
-        await deps.realtime_gateway.publish_notification(notification);
+        if (!suppressed) {
+          await deps.realtime_gateway.publish_notification(result.notification);
+          const marked_published = await deps.notification_repository.mark_realtime_published(
+            result.notification
+          );
+          if (!marked_published) {
+            throw new Error('notification_realtime_receipt_lost');
+          }
+        }
 
         response.status(202).json({
           ok: true,
-          notification: serialize_notification(notification)
+          suppressed,
+          notification: serialize_notification(result.notification)
         });
       } catch (error) {
         next(error);

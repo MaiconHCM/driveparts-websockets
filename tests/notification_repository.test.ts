@@ -30,6 +30,11 @@ function create_repository() {
     findOne: vi.fn(async () => null as NotificationDocument | null),
     findOneAndUpdate: vi.fn(async () => null as NotificationDocument | null),
     updateMany: vi.fn(async () => ({ acknowledged: true, modifiedCount: 0 })),
+    updateOne: vi.fn(async () => ({
+      acknowledged: true,
+      matchedCount: 1,
+      modifiedCount: 1
+    })),
     insertOne: vi.fn(async () => ({ acknowledged: true }))
   };
   const db = {
@@ -43,6 +48,150 @@ function create_repository() {
 }
 
 describe('NotificationRepository', () => {
+  it('reports a newly persisted marketplace inbox notification as created', async () => {
+    const { repository, collection } = create_repository();
+
+    const result = await repository.create_notification_with_result({
+      idempotency_key: 'marketplace_message:message_1',
+      store_id: 'store_1',
+      type: 'marketplace_message_received',
+      severity: 'info',
+      source: 'mercado_livre_brasil',
+      entity: 'integration_sale_message',
+      channel: 'mercado_libre_brasil',
+      title: 'Nova mensagem no marketplace',
+      message: 'Você recebeu uma nova mensagem.',
+      integration_id: 'integration_1',
+      data: {
+        external_message_id: 'message_1'
+      }
+    });
+
+    expect(result).toMatchObject({
+      created: true,
+      realtime_published: false,
+      notification: {
+        type: 'marketplace_message_received',
+        source: 'mercado_livre_brasil',
+        entity: 'integration_sale_message',
+        channel: 'mercado_libre_brasil'
+      }
+    });
+    expect(collection.insertOne).toHaveBeenCalledWith(result.notification);
+  });
+
+  it('reports an identical persisted but unpublished notification as retryable', async () => {
+    const existing = create_notification({
+      type: 'marketplace_question_received',
+      source: 'mercado_livre_brasil',
+      entity: 'integration_question',
+      channel: 'mercado_libre_brasil',
+      title: 'Nova pergunta no marketplace',
+      message: 'Você recebeu uma nova pergunta.',
+      idempotency_key: 'marketplace_question:question_1',
+      integration_id: 'integration_1',
+      data: {
+        external_question_id: 'question_1'
+      }
+    });
+    const { repository, collection } = create_repository();
+    collection.findOne.mockResolvedValue(existing);
+
+    await expect(repository.create_notification_with_result({
+      idempotency_key: existing.idempotency_key,
+      store_id: existing.store_id,
+      user_id: existing.user_id,
+      type: existing.type,
+      severity: existing.severity,
+      source: existing.source,
+      entity: existing.entity,
+      channel: existing.channel,
+      title: existing.title,
+      message: existing.message,
+      integration_id: existing.integration_id,
+      data: existing.data
+    })).resolves.toEqual({
+      notification: existing,
+      created: false,
+      realtime_published: false
+    });
+
+    expect(collection.insertOne).not.toHaveBeenCalled();
+  });
+
+  it('reports an identical successfully published notification as already published', async () => {
+    const existing = create_notification({
+      realtime_published_at: new Date('2026-07-25T12:01:00.000Z')
+    });
+    const { repository, collection } = create_repository();
+    collection.findOne.mockResolvedValue(existing);
+
+    await expect(repository.create_notification_with_result({
+      store_id: existing.store_id,
+      user_id: existing.user_id,
+      type: existing.type,
+      severity: existing.severity,
+      source: existing.source,
+      entity: existing.entity,
+      title: existing.title,
+      message: existing.message,
+      idempotency_key: existing.idempotency_key
+    })).resolves.toEqual({
+      notification: existing,
+      created: false,
+      realtime_published: true
+    });
+
+    expect(collection.insertOne).not.toHaveBeenCalled();
+  });
+
+  it('reports a concurrent identical insert as not created after the unique-index race', async () => {
+    const existing = create_notification();
+    const { repository, collection } = create_repository();
+    collection.findOne
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(existing);
+    collection.insertOne.mockRejectedValueOnce({ code: 11000 });
+
+    await expect(repository.create_notification_with_result({
+      store_id: existing.store_id,
+      user_id: existing.user_id,
+      type: existing.type,
+      severity: existing.severity,
+      source: existing.source,
+      entity: existing.entity,
+      title: existing.title,
+      message: existing.message,
+      idempotency_key: existing.idempotency_key
+    })).resolves.toEqual({
+      notification: existing,
+      created: false,
+      realtime_published: false
+    });
+
+    expect(collection.findOne).toHaveBeenCalledTimes(2);
+  });
+
+  it('marks realtime publication using the persisted notification identity', async () => {
+    const notification = create_notification();
+    const { repository, collection } = create_repository();
+
+    await expect(repository.mark_realtime_published(notification)).resolves.toBe(true);
+
+    expect(collection.updateOne).toHaveBeenCalledWith(
+      {
+        _id: notification._id,
+        store_id: notification.store_id,
+        idempotency_key: notification.idempotency_key
+      },
+      {
+        $set: {
+          realtime_published_at: expect.any(Date)
+        }
+      }
+    );
+  });
+
   it('returns the existing notification for an idempotent repeated publication error', async () => {
     const existing = create_notification({
       type: 'listing_error',

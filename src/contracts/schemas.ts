@@ -218,10 +218,23 @@ export const internal_notification_schema = z.object({
   idempotency_key: optional_id_value,
   store_id: id_value,
   user_id: optional_id_value,
-  type: z.enum(['listing_updated', 'listing_error', 'attendance_transfer']),
+  type: z.enum([
+    'listing_updated',
+    'listing_error',
+    'attendance_transfer',
+    'marketplace_message_received',
+    'marketplace_question_received'
+  ]),
   severity: z.enum(['info', 'warning', 'error']).default('info'),
   source: z.enum(['driveparts', 'mercado_livre_brasil', 'shopee', 'google_merchant', 'system']).default('driveparts'),
-  entity: z.enum(['listing', 'inventory_item', 'integration', 'attendance_thread']).default('listing'),
+  entity: z.enum([
+    'listing',
+    'inventory_item',
+    'integration',
+    'attendance_thread',
+    'integration_sale_message',
+    'integration_question'
+  ]).default('listing'),
   title: non_empty_text.max(160),
   message: non_empty_text.max(2000),
   channel: z.string().regex(lower_snake_case_value).optional(),

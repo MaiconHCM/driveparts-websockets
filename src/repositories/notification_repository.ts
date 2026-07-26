@@ -6,10 +6,21 @@ export type NotificationDocument = {
   _id: ObjectId;
   store_id: string;
   user_id?: string;
-  type: 'listing_updated' | 'listing_error' | 'attendance_transfer';
+  type:
+    | 'listing_updated'
+    | 'listing_error'
+    | 'attendance_transfer'
+    | 'marketplace_message_received'
+    | 'marketplace_question_received';
   severity: 'info' | 'warning' | 'error';
   source: 'driveparts' | 'mercado_livre_brasil' | 'shopee' | 'google_merchant' | 'system';
-  entity: 'listing' | 'inventory_item' | 'integration' | 'attendance_thread';
+  entity:
+    | 'listing'
+    | 'inventory_item'
+    | 'integration'
+    | 'attendance_thread'
+    | 'integration_sale_message'
+    | 'integration_question';
   title: string;
   message: string;
   created_at: Date;
@@ -20,6 +31,7 @@ export type NotificationDocument = {
   inventory_item_id?: string;
   external_listing_id?: string;
   data?: Record<string, unknown>;
+  realtime_published_at?: Date;
   read_at?: Date;
 };
 
@@ -33,6 +45,12 @@ export class NotificationIdempotencyConflictError extends Error {
 export type NotificationReadResult = {
   notification: NotificationDocument | null;
   changed: boolean;
+};
+
+export type NotificationCreateResult = {
+  notification: NotificationDocument;
+  created: boolean;
+  realtime_published: boolean;
 };
 
 export type NotificationsReadAllResult = {
@@ -56,6 +74,13 @@ export class NotificationRepository {
   }
 
   async create_notification(input: InternalNotificationInput): Promise<NotificationDocument> {
+    const result = await this.create_notification_with_result(input);
+    return result.notification;
+  }
+
+  async create_notification_with_result(
+    input: InternalNotificationInput
+  ): Promise<NotificationCreateResult> {
     if (input.idempotency_key) {
       const existing_notification = await this.notifications.findOne({
         store_id: input.store_id,
@@ -63,7 +88,11 @@ export class NotificationRepository {
       });
 
       if (existing_notification) {
-        return validate_idempotent_notification(existing_notification, input);
+        return {
+          notification: validate_idempotent_notification(existing_notification, input),
+          created: false,
+          realtime_published: Boolean(existing_notification.realtime_published_at)
+        };
       }
     }
 
@@ -89,7 +118,11 @@ export class NotificationRepository {
 
     try {
       await this.notifications.insertOne(notification);
-      return notification;
+      return {
+        notification,
+        created: true,
+        realtime_published: false
+      };
     } catch (error) {
       if (input.idempotency_key && is_duplicate_key_error(error)) {
         const existing_notification = await this.notifications.findOne({
@@ -98,12 +131,35 @@ export class NotificationRepository {
         });
 
         if (existing_notification) {
-          return validate_idempotent_notification(existing_notification, input);
+          return {
+            notification: validate_idempotent_notification(existing_notification, input),
+            created: false,
+            realtime_published: Boolean(existing_notification.realtime_published_at)
+          };
         }
       }
 
       throw error;
     }
+  }
+
+  async mark_realtime_published(notification: NotificationDocument): Promise<boolean> {
+    const result = await this.notifications.updateOne(
+      {
+        _id: notification._id,
+        store_id: notification.store_id,
+        ...(notification.idempotency_key
+          ? { idempotency_key: notification.idempotency_key }
+          : { idempotency_key: { $exists: false } })
+      },
+      {
+        $set: {
+          realtime_published_at: new Date()
+        }
+      }
+    );
+
+    return result.matchedCount === 1;
   }
 
   async list_notifications(input: ListNotificationsInput): Promise<NotificationDocument[]> {

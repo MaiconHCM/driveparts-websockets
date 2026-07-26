@@ -2,7 +2,7 @@
 
 Serviço Node.js responsável pelo realtime do DriveParts.
 
-Atualizado em 2026-07-25.
+Atualizado em 2026-07-26.
 
 ## Escopo atual
 
@@ -41,6 +41,45 @@ As rotas internas exigem `x-internal-token` e validam chaves em `snake_case`.
 Durante o encerramento, rotas não-health retornam `503` antes de autenticação,
 parsing ou persistência; `/health/live` permanece ativo e `/health/ready` retorna
 `503` com `status=shutting_down`.
+
+### Notificações de inbox do marketplace
+
+A queue envia mensagens e perguntas recebidas pelo
+`POST /internal/notifications`. O contrato específico do Mercado Livre usa:
+
+| Contato recebido | `type` | `entity` |
+| --- | --- | --- |
+| Mensagem de uma venda | `marketplace_message_received` | `integration_sale_message` |
+| Pergunta em um anúncio | `marketplace_question_received` | `integration_question` |
+
+Nos dois casos, `source` é `mercado_livre_brasil` e `channel` é
+`mercado_libre_brasil`. Exemplo:
+
+```json
+{
+  "idempotency_key": "marketplace_message:MLB123:message_456",
+  "store_id": "store_id",
+  "type": "marketplace_message_received",
+  "severity": "info",
+  "source": "mercado_livre_brasil",
+  "entity": "integration_sale_message",
+  "channel": "mercado_libre_brasil",
+  "title": "Nova mensagem no marketplace",
+  "message": "Você recebeu uma nova mensagem.",
+  "integration_id": "integration_id",
+  "data": {
+    "external_message_id": "message_456"
+  }
+}
+```
+
+Use uma `idempotency_key` estável para o contato externo. A primeira chamada
+persiste a notificação, emite `notification:new`, grava o recibo da emissão e
+responde `202` com `suppressed=false`. Se o fan-out falhar antes do recibo, um
+retry com payload idêntico tenta emitir novamente. Depois de uma emissão
+confirmada, os próximos retries respondem `202` com `suppressed=true` e a mesma
+`notification`, sem nova emissão. Reutilizar a chave com destino ou payload
+diferente responde `409`.
 
 ## Eventos Socket.IO
 
@@ -82,11 +121,11 @@ nova, o servidor emite primeiro os snapshots disponíveis (`chat:sync`,
 depois emite `connection:ready`. Os handlers de entrada já ficam instalados durante
 o bootstrap, mas respondem `not_ready` até esse evento.
 
-O consumidor deve tratar a entrega realtime como **at-least-once**: uma reconexão,
-retry ou republicação pode repetir um evento. Faça deduplicação pelos IDs persistidos
-(`message_id` e `notification_id`) e envie `client_message_id` estável nos retries.
-Notificações internas aceitam `idempotency_key`; idempotência de persistência não
-dispensa deduplicação na interface.
+O consumidor deve tratar a entrega realtime como **at-least-once**: uma reconexão
+ou repetição no transporte pode repetir um evento. Faça deduplicação pelos IDs
+persistidos (`message_id` e `notification_id`) e envie `client_message_id` estável
+nos retries. Notificações internas aceitam `idempotency_key`; o endpoint suprime
+a reemissão de um retry idêntico, mas isso não dispensa deduplicação na interface.
 
 ### Rooms e handlers
 

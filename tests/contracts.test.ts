@@ -97,6 +97,42 @@ describe('realtime contracts', () => {
     expect(payload.type).toBe('listing_updated');
   });
 
+  it.each([
+    {
+      type: 'marketplace_message_received',
+      entity: 'integration_sale_message',
+      title: 'Nova mensagem no marketplace'
+    },
+    {
+      type: 'marketplace_question_received',
+      entity: 'integration_question',
+      title: 'Nova pergunta no marketplace'
+    }
+  ] as const)('accepts persisted marketplace inbox notification type $type', (notification) => {
+    const payload = internal_notification_schema.parse({
+      idempotency_key: `${notification.type}:external_1`,
+      store_id: 'store_1',
+      type: notification.type,
+      severity: 'info',
+      source: 'mercado_livre_brasil',
+      entity: notification.entity,
+      channel: 'mercado_libre_brasil',
+      title: notification.title,
+      message: 'Você recebeu um novo contato no Mercado Livre.',
+      integration_id: 'integration_1',
+      data: {
+        external_id: 'external_1'
+      }
+    });
+
+    expect(payload).toMatchObject({
+      type: notification.type,
+      source: 'mercado_livre_brasil',
+      entity: notification.entity,
+      channel: 'mercado_libre_brasil'
+    });
+  });
+
   it('accepts strict publication result contracts for success and error', () => {
     const base = {
       schema_version: 1,
