@@ -47,33 +47,17 @@ parsing ou persistência; `/health/live` permanece ativo e `/health/ready` retor
 A queue envia mensagens, perguntas e pendências de anúncios recebidas, e o
 DriveParts envia novas vendas, pelo `POST /internal/notifications`:
 
-| Evento | `type` | `entity` |
-| --- | --- | --- |
-| Mensagem de uma venda | `marketplace_message_received` | `integration_sale_message` |
-| Pergunta em um anúncio | `marketplace_question_received` | `integration_question` |
-| Anúncio parado por pendência/moderação | `listing_error` | `listing` |
-| Nova venda processada | `marketplace_sale_created` | `sale` |
+| Evento                                 | `type`                          | `entity`                   |
+| -------------------------------------- | ------------------------------- | -------------------------- |
+| Mensagem de uma venda                  | `marketplace_message_received`  | `integration_sale_message` |
+| Pergunta em um anúncio                 | `marketplace_question_received` | `integration_question`     |
+| Anúncio parado por pendência/moderação | `listing_error`                 | `listing`                  |
+| Nova venda processada                  | `marketplace_sale_created`      | `sale`                     |
 
-Para mensagens, perguntas e pendências do Mercado Livre, `source` e `channel`
-usam `mercado_libre_brasil`. Exemplo:
-
-```json
-{
-  "idempotency_key": "marketplace_message:MLB123:message_456",
-  "store_id": "store_id",
-  "type": "marketplace_message_received",
-  "severity": "info",
-  "source": "mercado_livre_brasil",
-  "entity": "integration_sale_message",
-  "channel": "mercado_libre_brasil",
-  "title": "Nova mensagem no marketplace",
-  "message": "Você recebeu uma nova mensagem.",
-  "integration_id": "integration_id",
-  "data": {
-    "external_message_id": "message_456"
-  }
-}
-```
+Para mensagens, perguntas e pendências do Mercado Livre,
+`source=mercado_livre_brasil` e `channel=mercado_libre_brasil`. A diferença
+`livre`/`libre` é intencional: o primeiro é o nome de provedor já exposto pelo
+WebSocket e o segundo é a chave canônica do adapter.
 
 Use uma `idempotency_key` estável para o contato externo. A primeira chamada
 persiste a notificação, emite `notification:new`, grava o recibo da emissão e
@@ -82,6 +66,10 @@ retry com payload idêntico tenta emitir novamente. Depois de uma emissão
 confirmada, os próximos retries respondem `202` com `suppressed=true` e a mesma
 `notification`, sem nova emissão. Reutilizar a chave com destino ou payload
 diferente responde `409`.
+
+Payloads completos, cálculo das chaves, distinção dos dois tipos de
+`listing_error`, retries e entrega `at-least-once` estão no
+[contrato autoritativo Queue → WebSocket](docs/QUEUE_NOTIFICATIONS.md).
 
 ## Eventos Socket.IO
 
@@ -121,9 +109,37 @@ Registre todos os listeners antes de chamar `connect()` no cliente. Em uma conex
 nova, o servidor emite primeiro os snapshots disponíveis (`chat:sync`,
 `notification:sync`, `ecommerce_chat:sync` e `ecommerce_chat:presence`) e somente
 depois emite `connection:ready`. Os handlers de entrada já ficam instalados durante
-o bootstrap, mas respondem `not_ready` até esse evento. A sincronização de
-notificações retorna no máximo 30 registros por chamada; o cliente continua a
-paginação com `after_notification_id`.
+o bootstrap, mas respondem `not_ready` até esse evento.
+
+A sincronização de notificações retorna sempre em ordem cronológica e no máximo
+30 registros. Sem cursor, entrega a página mais recente. Para carregar histórico,
+envie `before_notification_id=oldest_notification_id`; para buscar somente
+eventos posteriores ao estado local, envie
+`after_notification_id=newest_notification_id`. Os cursores são mutuamente
+exclusivos.
+
+```js
+socket.emit(
+  "notification:sync",
+  {
+    before_notification_id: oldest_notification_id,
+    unread_only: false,
+    limit: 30,
+  },
+  (ack) => {
+    if (!ack.ok) return;
+    merge_by_notification_id(ack.data.notifications);
+    if (ack.data.has_more) {
+      load_older(ack.data.oldest_notification_id);
+    }
+  },
+);
+```
+
+O ACK e o evento de bootstrap contêm `notifications`, `has_more`,
+`oldest_notification_id` e `newest_notification_id`; os dois IDs são omitidos
+quando a página está vazia. Valores legados de `limit` entre 31 e 100 são
+aceitos, mas reduzidos a 30.
 
 O consumidor deve tratar a entrega realtime como **at-least-once**: uma reconexão
 ou repetição no transporte pode repetir um evento. Faça deduplicação pelos IDs
@@ -169,6 +185,10 @@ os índices atuais estão:
 e e-commerce e exige MongoDB em replica set ou cluster compatível. Defina `false`
 em Mongo standalone; por isso o `compose.internal.yaml` desativa a opção.
 
+`MONGODB_MAX_POOL_SIZE` limita o pool de cada processo (padrão `20`). Em uma
+topologia futura com réplicas, dimensione a soma dos pools contra a capacidade
+do cluster.
+
 ## Execução
 
 ```bash
@@ -186,7 +206,8 @@ npm run dev
 ## Docker (deploy em VPS)
 
 O build é multi-stage (`tsc` → `node dist/src/index.js`) e roda como usuário não-root.
-MongoDB e Redis são externos (não fazem parte do compose).
+No `compose.yaml`, o MongoDB é externo e o Redis dedicado/transitório faz parte
+do stack. O `compose.internal.yaml` inclui também um MongoDB isolado.
 
 O deploy constrói a imagem local `driveparts-websocket:latest` diretamente deste
 repositório. Não é necessário publicar nem baixar a aplicação pelo Docker Hub.
@@ -257,9 +278,12 @@ Notas:
 - Nos composes externos, o `.env` precisa conter `MONGODB_URL` ou, para
   compatibilidade com a stack atual, `MONGODB_PASSWORD`. Também são obrigatórios
   `DRIVEPARTS_INTERNAL_TOKEN` e `WEBSOCKET_JWT_SECRET`.
-- O healthcheck do container bate em `GET /health/ready`.
-- Para múltiplas instâncias, defina `REDIS_URL`, use afinidade de sessão no proxy
-  enquanto o transporte polling estiver habilitado e mantenha um prefixo exclusivo.
+- Os dois composes verificam o WebSocket em `GET /health/ready`; o Redis
+  dedicado possui healthcheck próprio.
+- O compose principal é de instância única: `container_name` e a porta fixa
+  impedem `docker compose --scale websocket=N`. O adapter Redis é apenas um dos
+  pré-requisitos de scale-out; veja o [runbook operacional](docs/OPERATIONS.md)
+  antes de criar uma topologia com múltiplas réplicas.
 
 ## Redis e resiliência
 
@@ -268,9 +292,10 @@ Notas:
 - O compose de produção mantém esse Redis separado do BullMQ. Como MongoDB é a
   fonte durável, persistência Redis fica desativada para evitar I/O desnecessário;
   reinícios apenas invalidam cache/presença e os clientes refazem o bootstrap.
-- O stream do adapter usa `MAXLEN=10000`; stream entries não possuem TTL. Chaves de
-  presença, cache, rate limit e, quando habilitada, sessão recuperável têm expiração
-  própria.
+- O stream do adapter usa comprimento máximo aproximado configurado por
+  `REDIS_SOCKET_STREAM_MAX_LENGTH` (padrão `10000`); stream entries não possuem
+  TTL. Chaves de presença, cache, rate limit e, quando habilitada, sessão
+  recuperável têm expiração própria.
 - A presença usa membros por socket com heartbeat e TTL; um processo encerrado à
   força deixa de aparecer online sem depender de cleanup manual.
 - Snapshots iniciais usam cache de poucos segundos com versões de invalidação. MongoDB
@@ -291,6 +316,10 @@ validar reconciliação e deduplicação no cliente.
 As chaves usam `REDIS_KEY_PREFIX`. Em Redis compartilhado, prefira ACL/credencial
 dedicada e nunca exponha a porta a redes não confiáveis.
 
+O Redis usa `noeviction`; ao atingir `maxmemory`, pode continuar respondendo
+`PING` e ainda assim rejeitar novas escritas. Limites, alertas, recuperação e
+rollback estão no [runbook operacional](docs/OPERATIONS.md).
+
 ## Autorização e compatibilidade
 
 - `SOCKET_ENFORCE_PERMISSIONS=false` preserva clientes atuais e faz as permissões
@@ -309,7 +338,15 @@ Para o fluxo completo do atendimento, regras de responsável, payloads, rooms e 
 
 - `docs/ATENDIMENTO_CHAT.md`
 
-Para o contrato queue → WebSocket, cerca de execução e atualização seletiva do
-frontend:
+Para resultados terminais de publicação Queue → WebSocket, cerca de execução e
+atualização seletiva do frontend:
 
 - `docs/PUBLICATION_RESULTS.md`
+
+Para mensagens, perguntas e pendências de anúncio enviadas pela Queue:
+
+- `docs/QUEUE_NOTIFICATIONS.md`
+
+Para deploy, Redis, recuperação, rollback e limites do scale-out atual:
+
+- `docs/OPERATIONS.md`

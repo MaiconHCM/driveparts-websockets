@@ -171,7 +171,7 @@ describe('HTTP application', () => {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
-        'x-internal-token': 'test_internal_token'
+        'x-internal-token': 'test_internal_token_at_least_32_chars'
       },
       body: JSON.stringify({
         store_id: 'store_1',
@@ -755,7 +755,7 @@ function create_test_config(): AppConfig {
     LOG_LEVEL: 'silent',
     MONGODB_URL: 'mongodb://localhost:27017',
     MONGODB_DB: 'test',
-    DRIVEPARTS_INTERNAL_TOKEN: 'test_internal_token',
+    DRIVEPARTS_INTERNAL_TOKEN: 'test_internal_token_at_least_32_chars',
     WEBSOCKET_JWT_SECRET: 'test_websocket_secret',
     CORS_ORIGINS: 'http://localhost'
   });
@@ -845,7 +845,7 @@ async function post_publication_result(url: string, payload: Record<string, unkn
     method: 'POST',
     headers: {
       'content-type': 'application/json',
-      'x-internal-token': 'test_internal_token'
+      'x-internal-token': 'test_internal_token_at_least_32_chars'
     },
     body: JSON.stringify(payload)
   });
@@ -856,7 +856,7 @@ async function post_notification(url: string, payload: Record<string, unknown>) 
     method: 'POST',
     headers: {
       'content-type': 'application/json',
-      'x-internal-token': 'test_internal_token'
+      'x-internal-token': 'test_internal_token_at_least_32_chars'
     },
     body: JSON.stringify(payload)
   });

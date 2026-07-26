@@ -83,7 +83,10 @@ describe('RedisRuntime', () => {
   it('creates clients with role-specific resilience options and attaches the streams adapter', () => {
     const { logger, info } = create_test_logger();
     const runtime = RedisRuntime.create(
-      create_test_config({ redis_url: 'redis://redis.internal:6379' }),
+      create_test_config({
+        redis_url: 'redis://redis.internal:6379',
+        redis_socket_stream_max_length: 25000
+      }),
       logger
     );
     const [adapter_client, command_client] = redis_mocks.FakeRedis.instances;
@@ -110,7 +113,7 @@ describe('RedisRuntime', () => {
         channelPrefix: 'driveparts:websocket:test:v1:socket_io',
         streamName: 'driveparts:websocket:test:v1:socket_io_stream',
         sessionKeyPrefix: 'driveparts:websocket:test:v1:socket_io_session:',
-        maxLen: 10000,
+        maxLen: 25000,
         onlyPlaintext: true
       }
     );
@@ -118,7 +121,8 @@ describe('RedisRuntime', () => {
     expect(info).toHaveBeenCalledWith(
       {
         redis_key_prefix: 'driveparts:websocket:test:v1',
-        adapter: 'redis_streams'
+        adapter: 'redis_streams',
+        stream_max_length: 25000
       },
       'socket_redis_adapter_enabled'
     );

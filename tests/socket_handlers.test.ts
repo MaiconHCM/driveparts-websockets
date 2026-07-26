@@ -11,7 +11,10 @@ import type {
   EcommerceChatRepository,
   EcommerceMessageDocument
 } from '../src/repositories/ecommerce_chat_repository.js';
-import type { NotificationRepository } from '../src/repositories/notification_repository.js';
+import type {
+  NotificationDocument,
+  NotificationRepository
+} from '../src/repositories/notification_repository.js';
 import type {
   CustomerRateLimiter,
   RateLimitResult
@@ -33,7 +36,10 @@ describe('Socket.IO handlers', () => {
     const snapshots = deferred<{
       chat: { messages: unknown[]; has_more: boolean };
       attendance: { threads: unknown[]; limit: number };
-      notifications: { notifications: unknown[] };
+      notifications: {
+        notifications: unknown[];
+        has_more: boolean;
+      };
     }>();
     const test_context = create_test_context();
     test_context.sync_cache.get_store_initial_sync.mockReturnValue(snapshots.promise);
@@ -57,7 +63,7 @@ describe('Socket.IO handlers', () => {
     snapshots.resolve({
       chat: { messages: [], has_more: false },
       attendance: { threads: [], limit: 30 },
-      notifications: { notifications: [] }
+      notifications: { notifications: [], has_more: false }
     });
     await wait_for(() => socket.outbound.some((item) => item.event_name === 'connection:ready'));
 
@@ -416,6 +422,62 @@ describe('Socket.IO handlers', () => {
     await tracker.drain();
   });
 
+  it('returns additive notification pagination metadata for history sync', async () => {
+    const test_context = create_test_context();
+    const notification = {
+      _id: new ObjectId('66a3b5688f9c5ee8d8f92a11'),
+      store_id: 'store_1',
+      type: 'listing_error',
+      severity: 'error',
+      source: 'mercado_livre_brasil',
+      entity: 'listing',
+      title: 'Anúncio pausado',
+      message: 'Revise a pendência.',
+      created_at: new Date('2026-07-26T12:00:00.000Z')
+    } satisfies NotificationDocument;
+    test_context.notification_repository.list_notifications.mockResolvedValue({
+      notifications: [notification],
+      has_more: true,
+      oldest_notification_id: notification._id.toHexString(),
+      newest_notification_id: notification._id.toHexString()
+    });
+    const socket = create_store_socket();
+    const tracker = new SocketWorkTracker(8, test_context.deps.logger);
+
+    register_store_socket(socket.as_authenticated(), test_context.deps, tracker);
+    await wait_for(() => socket.outbound.some((item) => item.event_name === 'connection:ready'));
+
+    const ack = vi.fn();
+    socket.receive('notification:sync', {
+      before_notification_id: '66a3b5688f9c5ee8d8f92a12',
+      limit: 20
+    }, ack);
+    await wait_for(() => ack.mock.calls.length === 1);
+
+    expect(test_context.notification_repository.list_notifications).toHaveBeenLastCalledWith({
+      store_id: 'store_1',
+      user_id: 'user_1',
+      before_notification_id: '66a3b5688f9c5ee8d8f92a12',
+      after_notification_id: undefined,
+      unread_only: false,
+      limit: 20
+    });
+    expect(ack).toHaveBeenCalledWith({
+      ok: true,
+      data: {
+        notifications: [
+          expect.objectContaining({
+            notification_id: notification._id.toHexString()
+          })
+        ],
+        has_more: true,
+        oldest_notification_id: notification._id.toHexString(),
+        newest_notification_id: notification._id.toHexString()
+      }
+    });
+    await tracker.drain();
+  });
+
   it('returns service unavailable when the distributed customer quota is uncertain', async () => {
     const test_context = create_test_context();
     test_context.customer_rate_limiter.consume.mockResolvedValueOnce({
@@ -655,12 +717,14 @@ function create_test_context(config_overrides: Partial<AppConfig> = {}) {
     mongodb_url: 'mongodb://test',
     mongodb_db: 'test',
     mongodb_transactions_enabled: false,
-    driveparts_internal_token: 'internal_token_for_tests',
+    mongodb_max_pool_size: 20,
+    driveparts_internal_token: 'internal_token_for_tests_at_least_32_chars',
     websocket_jwt_secret: 'websocket_secret_for_tests',
     cors_origins: ['http://localhost'],
     socket_path: '/socket.io',
     redis_key_prefix: 'test',
     redis_sync_cache_time_to_live_seconds: 15,
+    redis_socket_stream_max_length: 10000,
     redis_socket_presence_time_to_live_seconds: 90,
     presence_persist_interval_seconds: 15,
     socket_connection_recovery_seconds: 120,
@@ -706,7 +770,10 @@ function create_test_context(config_overrides: Partial<AppConfig> = {}) {
     mark_store_read: vi.fn()
   };
   const notification_repository = {
-    list_notifications: vi.fn(async () => []),
+    list_notifications: vi.fn<NotificationRepository['list_notifications']>(async () => ({
+      notifications: [],
+      has_more: false
+    })),
     mark_read: vi.fn(),
     mark_all_read: vi.fn()
   };

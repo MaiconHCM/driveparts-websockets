@@ -155,6 +155,11 @@ tipo `listing_error`, emitida como `notification:new`. Resultados `active` não
 criam notificação persistente; isso evita um toast e uma gravação Mongo para
 cada sucesso.
 
+Esse `listing_error` possui `entity=integration` e
+`data.publication_result_id`. Ele é diferente da pendência/moderação recebida
+por push, que possui `entity=listing` e `data.attention_reason`; veja
+[`QUEUE_NOTIFICATIONS.md`](./QUEUE_NOTIFICATIONS.md).
+
 ## Integração do frontend
 
 O cliente deve instalar os listeners antes de conectar.
@@ -210,3 +215,6 @@ socket.on('connection:ready', () => {
 
 Uma reconexão pode perder o evento transitório, mas não o estado: a leitura
 seletiva em `connection:ready` reconstrói a interface a partir da API canônica.
+
+Procedimentos de deploy, Redis, recuperação e rollback estão em
+[`OPERATIONS.md`](./OPERATIONS.md).

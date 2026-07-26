@@ -54,11 +54,13 @@ services:
       MAX_CHAT_MESSAGE_LENGTH: "4000"
       CORS_ORIGINS: https://driveparts.com.br,https://www.driveparts.com.br,https://mercadodrive.com.br,https://www.mercadodrive.com.br,https://mercadodrivehomologacao.saken2.virtuaserver.com.br
       MONGODB_DB: driveparts
+      MONGODB_MAX_POOL_SIZE: "${MONGODB_MAX_POOL_SIZE:-20}"
       MONGODB_TRANSACTIONS_ENABLED: "true"
       # URL completa tem precedência; o fallback preserva o ambiente legado atual.
       MONGODB_URL: "${MONGODB_URL:-mongodb://driveparts:${MONGODB_PASSWORD:-}@186.226.61.22}"
       REDIS_URL: "${REDIS_URL:-redis://websocket-redis:6379}"
       REDIS_KEY_PREFIX: driveparts:websocket:production:v1
+      REDIS_SOCKET_STREAM_MAX_LENGTH: "${REDIS_SOCKET_STREAM_MAX_LENGTH:-10000}"
       REDIS_SYNC_CACHE_TIME_TO_LIVE_SECONDS: "15"
       REDIS_SOCKET_PRESENCE_TIME_TO_LIVE_SECONDS: "90"
       PRESENCE_PERSIST_INTERVAL_SECONDS: "15"
@@ -79,6 +81,16 @@ services:
       options:
         max-size: 10m
         max-file: "3"
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "const p=process.env.PORT||3010;require('http').get('http://127.0.0.1:'+p+'/health/ready',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
 networks:
   internal_services:
     external: true

@@ -55,13 +55,14 @@ export class RedisRuntime {
       channelPrefix: `${prefix}:socket_io`,
       streamName: `${prefix}:socket_io_stream`,
       sessionKeyPrefix: `${prefix}:socket_io_session:`,
-      maxLen: 10000,
+      maxLen: this.config.redis_socket_stream_max_length,
       onlyPlaintext: true
     }));
 
     this.logger.info({
       redis_key_prefix: prefix,
-      adapter: 'redis_streams'
+      adapter: 'redis_streams',
+      stream_max_length: this.config.redis_socket_stream_max_length
     }, 'socket_redis_adapter_enabled');
   }
 

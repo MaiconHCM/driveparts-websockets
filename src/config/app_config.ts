@@ -8,6 +8,7 @@ export type AppConfig = {
   mongodb_url: string;
   mongodb_db: string;
   mongodb_transactions_enabled: boolean;
+  mongodb_max_pool_size: number;
   driveparts_internal_token: string;
   websocket_jwt_secret: string;
   cors_origins: string[];
@@ -15,6 +16,7 @@ export type AppConfig = {
   redis_url?: string;
   redis_key_prefix: string;
   redis_sync_cache_time_to_live_seconds: number;
+  redis_socket_stream_max_length: number;
   redis_socket_presence_time_to_live_seconds: number;
   presence_persist_interval_seconds: number;
   socket_connection_recovery_seconds: number;
@@ -50,13 +52,15 @@ const env_schema = z.object({
   MONGODB_URL: z.string().min(1),
   MONGODB_DB: z.string().min(1),
   MONGODB_TRANSACTIONS_ENABLED: boolean_env_value.default(true),
-  DRIVEPARTS_INTERNAL_TOKEN: z.string().min(16),
+  MONGODB_MAX_POOL_SIZE: z.coerce.number().int().min(1).max(200).default(20),
+  DRIVEPARTS_INTERNAL_TOKEN: z.string().min(32),
   WEBSOCKET_JWT_SECRET: z.string().min(16),
   CORS_ORIGINS: z.string().default('http://localhost:8000,http://127.0.0.1:8000'),
   SOCKET_PATH: z.string().default('/socket.io'),
   REDIS_URL: z.string().optional(),
   REDIS_KEY_PREFIX: z.string().trim().min(1).max(120).optional(),
   REDIS_SYNC_CACHE_TIME_TO_LIVE_SECONDS: z.coerce.number().int().min(0).max(300).default(15),
+  REDIS_SOCKET_STREAM_MAX_LENGTH: z.coerce.number().int().min(1000).max(1000000).default(10000),
   REDIS_SOCKET_PRESENCE_TIME_TO_LIVE_SECONDS: z.coerce.number().int().min(30).max(600).default(90),
   PRESENCE_PERSIST_INTERVAL_SECONDS: z.coerce.number().int().min(0).max(600).default(15),
   SOCKET_CONNECTION_RECOVERY_SECONDS: z.coerce.number().int().min(0).max(600).default(0),
@@ -83,6 +87,7 @@ export function load_config(source: NodeJS.ProcessEnv = process.env): AppConfig 
     mongodb_url: parsed.MONGODB_URL,
     mongodb_db: parsed.MONGODB_DB,
     mongodb_transactions_enabled: parsed.MONGODB_TRANSACTIONS_ENABLED,
+    mongodb_max_pool_size: parsed.MONGODB_MAX_POOL_SIZE,
     driveparts_internal_token: parsed.DRIVEPARTS_INTERNAL_TOKEN,
     websocket_jwt_secret: parsed.WEBSOCKET_JWT_SECRET,
     cors_origins: parsed.CORS_ORIGINS.split(',').map((origin) => origin.trim()).filter(Boolean),
@@ -90,6 +95,7 @@ export function load_config(source: NodeJS.ProcessEnv = process.env): AppConfig 
     redis_url,
     redis_key_prefix: parsed.REDIS_KEY_PREFIX ?? default_redis_key_prefix,
     redis_sync_cache_time_to_live_seconds: parsed.REDIS_SYNC_CACHE_TIME_TO_LIVE_SECONDS,
+    redis_socket_stream_max_length: parsed.REDIS_SOCKET_STREAM_MAX_LENGTH,
     redis_socket_presence_time_to_live_seconds: parsed.REDIS_SOCKET_PRESENCE_TIME_TO_LIVE_SECONDS,
     presence_persist_interval_seconds: parsed.PRESENCE_PERSIST_INTERVAL_SECONDS,
     socket_connection_recovery_seconds: parsed.SOCKET_CONNECTION_RECOVERY_SECONDS,

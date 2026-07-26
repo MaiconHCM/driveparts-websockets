@@ -90,6 +90,19 @@ describe('realtime contracts', () => {
     expect(() => notification_sync_schema.parse({ limit: 101 })).toThrow();
   });
 
+  it('keeps notification history and incremental cursors mutually exclusive', () => {
+    expect(notification_sync_schema.parse({
+      before_notification_id: '66a3b5688f9c5ee8d8f92a10'
+    }).before_notification_id).toBe('66a3b5688f9c5ee8d8f92a10');
+    expect(notification_sync_schema.parse({
+      after_notification_id: '66a3b5688f9c5ee8d8f92a11'
+    }).after_notification_id).toBe('66a3b5688f9c5ee8d8f92a11');
+    expect(() => notification_sync_schema.parse({
+      before_notification_id: '66a3b5688f9c5ee8d8f92a10',
+      after_notification_id: '66a3b5688f9c5ee8d8f92a11'
+    })).toThrow();
+  });
+
   it('accepts listing notification payload', () => {
     const payload = internal_notification_schema.parse({
       store_id: 'store_1',

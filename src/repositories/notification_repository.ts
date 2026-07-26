@@ -63,28 +63,24 @@ export type NotificationsReadAllResult = {
 type ListNotificationsInput = {
   store_id: string;
   user_id: string;
+  before_notification_id?: string;
   after_notification_id?: string;
   unread_only: boolean;
   limit: number;
 };
 
-type PendingIntegrationQuestionDocument = {
-  _id: ObjectId;
-  store_id: string;
-  integration_id: string;
-  external_id: string;
-  raw_data?: {
-    status?: string;
-  };
+export type NotificationPage = {
+  notifications: NotificationDocument[];
+  has_more: boolean;
+  oldest_notification_id?: string;
+  newest_notification_id?: string;
 };
 
 export class NotificationRepository {
   private readonly notifications: Collection<NotificationDocument>;
-  private readonly integration_questions: Collection<PendingIntegrationQuestionDocument>;
 
   constructor(db: Db) {
     this.notifications = db.collection<NotificationDocument>('websocket_notifications');
-    this.integration_questions = db.collection<PendingIntegrationQuestionDocument>('integration_questions');
   }
 
   async create_notification(input: InternalNotificationInput): Promise<NotificationDocument> {
@@ -176,57 +172,56 @@ export class NotificationRepository {
     return result.matchedCount === 1;
   }
 
-  async list_notifications(input: ListNotificationsInput): Promise<NotificationDocument[]> {
-    const visibility_query: Filter<NotificationDocument> = {
+  async list_notifications(input: ListNotificationsInput): Promise<NotificationPage> {
+    const query: Filter<NotificationDocument> = {
       store_id: input.store_id,
-      $or: build_notification_visibility_conditions(input.user_id)
+      $or: build_notification_visibility_conditions(input.user_id),
+      ...(input.unread_only ? { read_at: { $exists: false } } : {})
     };
+    const after_notification_id = (
+      input.after_notification_id
+      && ObjectId.isValid(input.after_notification_id)
+    )
+      ? input.after_notification_id
+      : undefined;
+    const lists_incrementally = Boolean(after_notification_id);
 
-    if (input.after_notification_id && ObjectId.isValid(input.after_notification_id)) {
-      const query: Filter<NotificationDocument> = {
-        ...visibility_query,
-        _id: { $gt: new ObjectId(input.after_notification_id) },
-        ...(input.unread_only ? { read_at: { $exists: false } } : {})
-      };
-
-      return this.notifications
-        .find(query)
-        .sort({ _id: 1 })
-        .limit(input.limit)
-        .toArray();
+    if (after_notification_id) {
+      query._id = { $gt: new ObjectId(after_notification_id) };
+    } else if (
+      input.before_notification_id
+      && ObjectId.isValid(input.before_notification_id)
+    ) {
+      query._id = { $lt: new ObjectId(input.before_notification_id) };
     }
 
-    const [latest, unread, pending_questions] = await Promise.all([
-      input.unread_only
-        ? Promise.resolve([])
-        : this.notifications
-          .find(visibility_query)
-          .sort({ _id: -1 })
-          .limit(input.limit)
-          .toArray(),
-      this.notifications
-        .find({
-          ...visibility_query,
-          read_at: { $exists: false }
-        })
-        .sort({ _id: -1 })
-        .limit(input.limit)
-        .toArray(),
-      input.unread_only
-        ? Promise.resolve([])
-        : this.list_pending_question_notifications(
-          input.store_id,
-          input.user_id,
-          input.limit
-        )
-    ]);
+    // Before the hard result cap, the first page merged recent, unread and
+    // pending-question queries. Unread and pending notifications are subsets
+    // of this visibility query, so the newest capped page is identical with
+    // one bounded read.
+    const candidates = await this.notifications
+      .find(query)
+      .sort({ _id: lists_incrementally ? 1 : -1 })
+      .limit(input.limit + 1)
+      .toArray();
+    const has_more = candidates.length > input.limit;
+    const page_candidates = candidates.slice(0, input.limit);
+    const notifications = lists_incrementally
+      ? page_candidates
+      : page_candidates.reverse();
+    const oldest_notification = notifications[0];
+    const newest_notification = notifications.at(-1);
 
-    const merged = merge_notifications_by_id([
-      ...latest,
-      ...unread,
-      ...pending_questions
-    ]);
-    return merged.length > input.limit ? merged.slice(-input.limit) : merged;
+    return {
+      notifications,
+      has_more,
+      ...(oldest_notification
+        ? { oldest_notification_id: oldest_notification._id.toHexString() }
+        : {}),
+      ...(newest_notification
+        ? { newest_notification_id: newest_notification._id.toHexString() }
+        : {})
+    };
   }
 
   async mark_read(
@@ -287,87 +282,6 @@ export class NotificationRepository {
     };
   }
 
-  private async list_pending_question_notifications(
-    store_id: string,
-    user_id: string,
-    limit: number
-  ): Promise<NotificationDocument[]> {
-    const pending_questions = await this.integration_questions
-      .find(
-        {
-          store_id,
-          'raw_data.status': 'unanswered'
-        },
-        {
-          projection: {
-            _id: 1,
-            integration_id: 1,
-            external_id: 1
-          }
-        }
-      )
-      .sort({ _id: -1 })
-      .limit(limit)
-      .toArray();
-    const notification_identity_queries = pending_questions
-      .map((question): Filter<NotificationDocument> | null => {
-        const integration_id = String(question.integration_id ?? '').trim();
-        const external_id = String(question.external_id ?? '').trim();
-        if (integration_id === '' || external_id === '') {
-          return null;
-        }
-
-        return {
-          type: 'marketplace_question_received',
-          integration_id,
-          'data.external_question_id': external_id
-        };
-      })
-      .filter((query): query is Filter<NotificationDocument> => query !== null);
-
-    if (notification_identity_queries.length === 0) {
-      return [];
-    }
-
-    const visibility_conditions = build_notification_visibility_conditions(user_id);
-    const query_batches = chunk(notification_identity_queries, 200);
-    const results = await Promise.all(query_batches.map((identity_queries) => (
-      this.notifications
-        .find({
-          store_id,
-          $and: [
-            { $or: visibility_conditions },
-            { $or: identity_queries }
-          ]
-        })
-        .sort({ _id: -1 })
-        .limit(limit)
-        .toArray()
-    )));
-
-    return merge_notifications_by_id(results.flat());
-  }
-}
-
-function merge_notifications_by_id(
-  notifications: NotificationDocument[]
-): NotificationDocument[] {
-  const notifications_by_id = new Map<string, NotificationDocument>();
-  notifications.forEach((notification) => {
-    notifications_by_id.set(notification._id.toHexString(), notification);
-  });
-
-  return Array.from(notifications_by_id.values()).sort(
-    (left, right) => left._id.toHexString().localeCompare(right._id.toHexString())
-  );
-}
-
-function chunk<T>(values: T[], size: number): T[][] {
-  const chunks: T[][] = [];
-  for (let index = 0; index < values.length; index += size) {
-    chunks.push(values.slice(index, index + size));
-  }
-  return chunks;
 }
 
 function build_notification_visibility_conditions(user_id: string): Filter<NotificationDocument>[] {

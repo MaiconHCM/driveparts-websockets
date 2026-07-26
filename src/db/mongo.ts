@@ -11,7 +11,7 @@ export type MongoConnection = {
 export async function connect_mongo(config: AppConfig, logger: AppLogger): Promise<MongoConnection> {
   const client = new MongoClient(config.mongodb_url, {
     appName: 'driveparts_websocket',
-    maxPoolSize: 20,
+    maxPoolSize: config.mongodb_max_pool_size,
     maxConnecting: 4,
     maxIdleTimeMS: 60000,
     waitQueueTimeoutMS: 3000,
@@ -24,7 +24,10 @@ export async function connect_mongo(config: AppConfig, logger: AppLogger): Promi
   const db = client.db(config.mongodb_db);
   await db.command({ ping: 1 });
 
-  logger.info({ mongodb_db: config.mongodb_db }, 'mongodb_connected');
+  logger.info({
+    mongodb_db: config.mongodb_db,
+    mongodb_max_pool_size: config.mongodb_max_pool_size
+  }, 'mongodb_connected');
 
   return {
     client,

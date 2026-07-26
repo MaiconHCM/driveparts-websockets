@@ -68,6 +68,10 @@ Persiste e publica uma notificação. Exige `x-internal-token`, chaves em
 `lower_snake_case` e payload válido. `idempotency_key` é opcional, mas
 recomendado.
 
+Mensagens, perguntas e pendências enviadas pela Queue possuem contrato
+idempotente mais estrito em
+[`QUEUE_NOTIFICATIONS.md`](./QUEUE_NOTIFICATIONS.md).
+
 ### `POST /internal/publication-results`
 
 Confirma o resultado terminal de uma publicação contra o snapshot autoritativo
@@ -305,9 +309,10 @@ Quando `REDIS_URL` está definida, são usados dois clientes:
 - adapter: Redis Streams do Socket.IO para distribuição entre instâncias;
 - comandos: cache, presença, rate limit e verificações operacionais.
 
-O adapter usa um stream com `MAXLEN` aproximado de `10.000` entradas. Esse
-limite é por quantidade, não por tempo: o stream não tem TTL. Ele também não é
-uma fila de negócio nem substitui MongoDB ou uma outbox.
+O adapter usa um stream com `MAXLEN` aproximado configurado por
+`REDIS_SOCKET_STREAM_MAX_LENGTH` (padrão `10.000`). Esse limite é por
+quantidade, não por tempo: o stream não tem TTL. Ele também não é uma fila de
+negócio nem substitui MongoDB ou uma outbox.
 
 ### Cache de sincronização
 
@@ -453,6 +458,10 @@ O `compose.yaml` externo mapeia
 referenciados por esse alias quando a URL correspondente for configurada. O
 `compose.internal.yaml` não cria o alias porque MongoDB e Redis são acessados
 pelos nomes de serviço `mongo` e `redis`.
+
+O manifesto versionado é de instância única. Redis Streams não elimina a
+necessidade de proxy com afinidade, portas escaláveis, drain e teste de
+reconexão. Veja [`OPERATIONS.md`](./OPERATIONS.md).
 
 ## Arquivos para começar uma análise
 

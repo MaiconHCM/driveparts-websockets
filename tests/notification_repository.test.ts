@@ -324,77 +324,119 @@ describe('NotificationRepository', () => {
     );
   });
 
-  it('bounds the combined recent, unread and unanswered-question snapshot', async () => {
+  it('returns a bounded chronological snapshot with exact history metadata', async () => {
     const { repository, collection, questions } = create_repository();
-    const recent = create_notification({
+    const oldest_excluded = create_notification({
       _id: new ObjectId('66a3b5688f9c5ee8d8f92a11'),
-      read_at: new Date('2026-07-26T12:01:00.000Z')
+      idempotency_key: 'event_1'
     });
-    const unread = create_notification({
+    const oldest_included = create_notification({
       _id: new ObjectId('66a3b5688f9c5ee8d8f92a12'),
       idempotency_key: 'event_2'
     });
-    const pending_question = create_notification({
+    const newest = create_notification({
       _id: new ObjectId('66a3b5688f9c5ee8d8f92a13'),
-      type: 'marketplace_question_received',
-      entity: 'integration_question',
-      integration_id: 'integration_1',
-      idempotency_key: 'marketplace_question:question_1',
-      data: {
-        external_question_id: 'question_1'
-      },
-      read_at: new Date('2026-07-25T12:05:00.000Z')
+      idempotency_key: 'event_3'
     });
-    const recent_cursor = create_mock_cursor([recent]);
-    const unread_cursor = create_mock_cursor([unread]);
-    const pending_notification_cursor = create_mock_cursor([pending_question]);
-    const pending_question_cursor = create_mock_cursor([{
-      _id: new ObjectId('66a3b5688f9c5ee8d8f92a14'),
-      store_id: 'store_1',
-      integration_id: 'integration_1',
-      external_id: 'question_1',
-      raw_data: {
-        status: 'unanswered'
-      }
-    }]);
-    collection.find
-      .mockReturnValueOnce(recent_cursor)
-      .mockReturnValueOnce(unread_cursor)
-      .mockReturnValueOnce(pending_notification_cursor);
-    questions.find.mockReturnValue(pending_question_cursor);
+    const cursor = create_mock_cursor([newest, oldest_included, oldest_excluded]);
+    collection.find.mockReturnValueOnce(cursor);
 
-    const notifications = await repository.list_notifications({
+    const page = await repository.list_notifications({
       store_id: 'store_1',
       user_id: 'user_1',
       unread_only: false,
-      limit: 1
+      limit: 2
     });
 
-    expect(notifications.map((notification) => notification._id.toHexString())).toEqual([
-      pending_question._id.toHexString()
-    ]);
-    expect(recent_cursor.limit).toHaveBeenCalledWith(1);
-    expect(unread_cursor.limit).toHaveBeenCalledWith(1);
-    expect(pending_question_cursor.limit).toHaveBeenCalledWith(1);
-    expect(pending_notification_cursor.limit).toHaveBeenCalledWith(1);
-    expect(collection.find.mock.calls[2]?.[0]).toMatchObject({
+    expect(page).toEqual({
+      notifications: [oldest_included, newest],
+      has_more: true,
+      oldest_notification_id: oldest_included._id.toHexString(),
+      newest_notification_id: newest._id.toHexString()
+    });
+    expect(cursor.sort).toHaveBeenCalledWith({ _id: -1 });
+    expect(cursor.limit).toHaveBeenCalledWith(3);
+    expect(collection.find).toHaveBeenCalledOnce();
+    expect(collection.find).toHaveBeenCalledWith({
       store_id: 'store_1',
-      $and: [
-        {
-          $or: [
-            { user_id: { $exists: false } },
-            { user_id: 'user_1' }
-          ]
-        },
-        {
-          $or: [
-            expect.objectContaining({
-              type: 'marketplace_question_received',
-              integration_id: 'integration_1'
-            })
-          ]
-        }
+      $or: [
+        { user_id: { $exists: false } },
+        { user_id: 'user_1' }
       ]
     });
+    expect(questions.find).not.toHaveBeenCalled();
+  });
+
+  it('keeps the closest older notifications when paginating history', async () => {
+    const { repository, collection } = create_repository();
+    const oldest_excluded = create_notification({
+      _id: new ObjectId('66a3b5688f9c5ee8d8f92a10')
+    });
+    const oldest_included = create_notification({
+      _id: new ObjectId('66a3b5688f9c5ee8d8f92a11')
+    });
+    const newest_included = create_notification({
+      _id: new ObjectId('66a3b5688f9c5ee8d8f92a12')
+    });
+    const cursor = create_mock_cursor([
+      newest_included,
+      oldest_included,
+      oldest_excluded
+    ]);
+    collection.find.mockReturnValueOnce(cursor);
+
+    const page = await repository.list_notifications({
+      store_id: 'store_1',
+      user_id: 'user_1',
+      before_notification_id: '66a3b5688f9c5ee8d8f92a13',
+      unread_only: false,
+      limit: 2
+    });
+
+    expect(page.notifications).toEqual([oldest_included, newest_included]);
+    expect(page.has_more).toBe(true);
+    expect(page.oldest_notification_id).toBe(oldest_included._id.toHexString());
+    expect(page.newest_notification_id).toBe(newest_included._id.toHexString());
+    expect(cursor.sort).toHaveBeenCalledWith({ _id: -1 });
+    expect(cursor.limit).toHaveBeenCalledWith(3);
+    expect(collection.find).toHaveBeenCalledWith(expect.objectContaining({
+      _id: { $lt: new ObjectId('66a3b5688f9c5ee8d8f92a13') }
+    }));
+  });
+
+  it('returns incremental notifications in chronological order after a cursor', async () => {
+    const { repository, collection } = create_repository();
+    const first = create_notification({
+      _id: new ObjectId('66a3b5688f9c5ee8d8f92a11')
+    });
+    const second = create_notification({
+      _id: new ObjectId('66a3b5688f9c5ee8d8f92a12')
+    });
+    const excluded = create_notification({
+      _id: new ObjectId('66a3b5688f9c5ee8d8f92a13')
+    });
+    const cursor = create_mock_cursor([first, second, excluded]);
+    collection.find.mockReturnValueOnce(cursor);
+
+    const page = await repository.list_notifications({
+      store_id: 'store_1',
+      user_id: 'user_1',
+      after_notification_id: '66a3b5688f9c5ee8d8f92a10',
+      unread_only: true,
+      limit: 2
+    });
+
+    expect(page).toEqual({
+      notifications: [first, second],
+      has_more: true,
+      oldest_notification_id: first._id.toHexString(),
+      newest_notification_id: second._id.toHexString()
+    });
+    expect(cursor.sort).toHaveBeenCalledWith({ _id: 1 });
+    expect(cursor.limit).toHaveBeenCalledWith(3);
+    expect(collection.find).toHaveBeenCalledWith(expect.objectContaining({
+      _id: { $gt: new ObjectId('66a3b5688f9c5ee8d8f92a10') },
+      read_at: { $exists: false }
+    }));
   });
 });

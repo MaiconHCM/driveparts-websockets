@@ -9,9 +9,6 @@ import {
   ecommerce_chat_store_send_schema,
   ecommerce_chat_store_sync_schema,
   NOTIFICATION_SYNC_LIMIT,
-  notification_read_all_schema,
-  notification_read_schema,
-  notification_sync_schema,
   presence_sync_schema
 } from '../../contracts/schemas.js';
 import {
@@ -24,8 +21,7 @@ import {
   serialize_attendance_thread,
   serialize_chat_message,
   serialize_ecommerce_conversation,
-  serialize_ecommerce_message,
-  serialize_notification
+  serialize_ecommerce_message
 } from '../../serializers/realtime.js';
 import type { AuthenticatedSocket } from '../auth.js';
 import {
@@ -40,6 +36,10 @@ import {
   type HandlerDependencies,
   type SocketWorkTracker
 } from './shared.js';
+import {
+  register_store_notification_handlers,
+  serialize_notification_page
+} from './store_notifications.js';
 
 type StoreSocketState = {
   ready: boolean;
@@ -217,7 +217,7 @@ async function bootstrap_store_socket(
       identity.user_id,
       permission_scope,
       async () => {
-        const [chat_sync_result, attendance_threads, notifications] = await Promise.all([
+        const [chat_sync_result, attendance_threads, notification_page] = await Promise.all([
           can_read_chat
             ? deps.chat_repository.list_messages({
               store_id: identity.store_id,
@@ -241,7 +241,10 @@ async function bootstrap_store_socket(
               unread_only: true,
               limit: NOTIFICATION_SYNC_LIMIT
             })
-            : Promise.resolve([])
+            : Promise.resolve({
+              notifications: [],
+              has_more: false
+            })
         ]);
 
         return {
@@ -256,9 +259,7 @@ async function bootstrap_store_socket(
             }
           } : {}),
           ...(can_read_notifications ? {
-            notifications: {
-              notifications: notifications.map(serialize_notification)
-            }
+            notifications: serialize_notification_page(notification_page)
           } : {})
         };
       }
@@ -314,6 +315,8 @@ function install_store_event_handlers(
     user_id: identity.user_id
   };
   const is_ready = () => state.ready;
+
+  register_store_notification_handlers(socket, is_ready, deps, tracker);
 
   register_socket_event(socket, tracker, 'chat:send', is_ready, async (payload, ack) => {
     if (!require_permission(
@@ -597,113 +600,6 @@ function install_store_event_handlers(
       await handle_handler_error(deps, err, ack, {
         event_name: 'ecommerce_chat:read',
         invalid_payload_message: 'invalid_ecommerce_chat_read_payload',
-        context
-      });
-    }
-  });
-
-  register_socket_event(socket, tracker, 'notification:sync', is_ready, async (payload, ack) => {
-    if (!require_permission(
-      deps.config,
-      identity.permissions,
-      'notification_read',
-      ack,
-      'notification_read_not_allowed'
-    )) {
-      return;
-    }
-
-    try {
-      const input = notification_sync_schema.parse(payload ?? {});
-      const notifications = await deps.notification_repository.list_notifications({
-        store_id: identity.store_id,
-        user_id: identity.user_id,
-        after_notification_id: input.after_notification_id,
-        unread_only: input.unread_only,
-        limit: input.limit
-      });
-      send_ack(ack, ok_ack({
-        notifications: notifications.map(serialize_notification)
-      }));
-    } catch (err) {
-      await handle_handler_error(deps, err, ack, {
-        event_name: 'notification:sync',
-        invalid_payload_message: 'invalid_notification_sync_payload',
-        context
-      });
-    }
-  });
-
-  register_socket_event(socket, tracker, 'notification:read', is_ready, async (payload, ack) => {
-    if (!require_permission(
-      deps.config,
-      identity.permissions,
-      'notification_read',
-      ack,
-      'notification_read_not_allowed'
-    )) {
-      return;
-    }
-
-    try {
-      const input = notification_read_schema.parse(payload);
-      const read_result = await deps.notification_repository.mark_read(
-        identity.store_id,
-        identity.user_id,
-        input.notification_id
-      );
-      if (!read_result.notification) {
-        send_ack(ack, error_ack('not_found', 'notification_not_found'));
-        return;
-      }
-
-      if (read_result.changed) {
-        await deps.realtime_gateway.publish_notification_read(read_result.notification);
-      }
-      send_ack(ack, ok_ack({
-        notification: serialize_notification(read_result.notification)
-      }));
-    } catch (err) {
-      await handle_handler_error(deps, err, ack, {
-        event_name: 'notification:read',
-        invalid_payload_message: 'invalid_notification_read_payload',
-        context
-      });
-    }
-  });
-
-  register_socket_event(socket, tracker, 'notification:read_all', is_ready, async (payload, ack) => {
-    if (!require_permission(
-      deps.config,
-      identity.permissions,
-      'notification_read',
-      ack,
-      'notification_read_not_allowed'
-    )) {
-      return;
-    }
-
-    try {
-      notification_read_all_schema.parse(payload ?? {});
-      const read_result = await deps.notification_repository.mark_all_read(
-        identity.store_id,
-        identity.user_id
-      );
-      if (read_result.updated_count > 0) {
-        await deps.realtime_gateway.publish_notifications_read_all({
-          store_id: identity.store_id,
-          user_id: identity.user_id,
-          read_at: read_result.read_at
-        });
-      }
-      send_ack(ack, ok_ack({
-        updated_count: read_result.updated_count,
-        read_at: read_result.read_at.toISOString()
-      }));
-    } catch (err) {
-      await handle_handler_error(deps, err, ack, {
-        event_name: 'notification:read_all',
-        invalid_payload_message: 'invalid_notification_read_all_payload',
         context
       });
     }

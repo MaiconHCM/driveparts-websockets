@@ -5,7 +5,7 @@ const required_environment = {
   NODE_ENV: 'test',
   MONGODB_URL: 'mongodb://localhost:27017',
   MONGODB_DB: 'driveparts_test',
-  DRIVEPARTS_INTERNAL_TOKEN: 'internal_token_for_tests',
+  DRIVEPARTS_INTERNAL_TOKEN: 'internal_token_for_tests_at_least_32_chars',
   WEBSOCKET_JWT_SECRET: 'websocket_secret_for_tests'
 };
 
@@ -16,7 +16,9 @@ describe('application config', () => {
     expect(config).toMatchObject({
       redis_key_prefix: 'driveparts:websocket:test:v1',
       mongodb_transactions_enabled: true,
+      mongodb_max_pool_size: 20,
       redis_sync_cache_time_to_live_seconds: 15,
+      redis_socket_stream_max_length: 10000,
       redis_socket_presence_time_to_live_seconds: 90,
       presence_persist_interval_seconds: 15,
       socket_connection_recovery_seconds: 0,
@@ -34,12 +36,23 @@ describe('application config', () => {
       ...required_environment,
       SOCKET_ENFORCE_PERMISSIONS: 'true',
       ALLOW_LEGACY_STORE_ID_MASTER_ROLE: 'false',
-      REDIS_SYNC_CACHE_TIME_TO_LIVE_SECONDS: '0'
+      REDIS_SYNC_CACHE_TIME_TO_LIVE_SECONDS: '0',
+      MONGODB_MAX_POOL_SIZE: '40',
+      REDIS_SOCKET_STREAM_MAX_LENGTH: '50000'
     });
 
     expect(config.socket_enforce_permissions).toBe(true);
     expect(config.allow_legacy_store_id_master_role).toBe(false);
     expect(config.redis_sync_cache_time_to_live_seconds).toBe(0);
+    expect(config.mongodb_max_pool_size).toBe(40);
+    expect(config.redis_socket_stream_max_length).toBe(50000);
+  });
+
+  it('requires an internal token with at least thirty-two characters', () => {
+    expect(() => load_config({
+      ...required_environment,
+      DRIVEPARTS_INTERNAL_TOKEN: 'too_short'
+    })).toThrow();
   });
 
   it('rejects an unsafe presence TTL', () => {
