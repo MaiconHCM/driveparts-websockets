@@ -34,6 +34,10 @@ type InventoryItemDocument = {
   marketplace_name?: string;
   catalog_item_name?: string;
   stock_keeping_unit?: string;
+  images?: Array<{
+    url?: string;
+    thumbnail_url?: string;
+  }>;
 };
 
 export type SupportRequestPayload = {
@@ -43,6 +47,7 @@ export type SupportRequestPayload = {
   inventory_item_name: string;
   inventory_item_code: string;
   stock_keeping_unit: string;
+  inventory_item_thumbnail_url: string;
   status: SupportRequestDocument['status'];
   status_label: string;
   request_description: string;
@@ -102,7 +107,8 @@ export class SupportRequestRepository {
           deleted: 1,
           marketplace_name: 1,
           catalog_item_name: 1,
-          stock_keeping_unit: 1
+          stock_keeping_unit: 1,
+          images: 1
         }
       }).toArray()
       : [];
@@ -204,6 +210,7 @@ function serialize_support_request(
     inventory_item_name,
     inventory_item_code: '',
     stock_keeping_unit: normalize_text(inventory_item?.stock_keeping_unit),
+    inventory_item_thumbnail_url: get_inventory_item_thumbnail_url(inventory_item),
     status: support_request.status,
     status_label: get_status_label(support_request.status),
     request_description: normalize_text(support_request.request_description),
@@ -217,6 +224,17 @@ function serialize_support_request(
     customer_viewed_at: serialize_date(support_request.customer_viewed_at),
     detail_url: `/sistema/update-item/${encodeURIComponent(support_request.inventory_item_id)}`
   };
+}
+
+function get_inventory_item_thumbnail_url(
+  inventory_item: InventoryItemDocument | undefined
+): string {
+  const primary_image = Array.isArray(inventory_item?.images)
+    ? inventory_item.images[0]
+    : undefined;
+
+  return normalize_text(primary_image?.thumbnail_url)
+    || normalize_text(primary_image?.url);
 }
 
 function get_latest_response(support_request: SupportRequestDocument): {

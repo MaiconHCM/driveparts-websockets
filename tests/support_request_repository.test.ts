@@ -25,7 +25,11 @@ describe('SupportRequestRepository', () => {
       store_id: 'store_1',
       deleted: false,
       marketplace_name: 'Motor completo',
-      stock_keeping_unit: 'SKU-1'
+      stock_keeping_unit: 'SKU-1',
+      images: [{
+        url: '/uploads/pecas/motor.jpg',
+        thumbnail_url: '/uploads/pecas/thumbnail/motor.jpg'
+      }]
     }]);
     const support_requests = {
       find: vi.fn(() => support_cursor),
@@ -53,7 +57,8 @@ describe('SupportRequestRepository', () => {
       expect.objectContaining({
         projection: expect.objectContaining({
           marketplace_name: 1,
-          stock_keeping_unit: 1
+          stock_keeping_unit: 1,
+          images: 1
         })
       })
     );
@@ -65,6 +70,7 @@ describe('SupportRequestRepository', () => {
           id: support_request._id.toHexString(),
           inventory_item_name: 'Motor completo',
           stock_keeping_unit: 'SKU-1',
+          inventory_item_thumbnail_url: '/uploads/pecas/thumbnail/motor.jpg',
           latest_response: 'Ajuste concluído',
           latest_response_author: 'suporte',
           is_unread: true
