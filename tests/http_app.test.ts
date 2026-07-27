@@ -17,6 +17,7 @@ import type {
   InventoryItemIntegrationSnapshot,
   PublicationResultRepository
 } from '../src/repositories/publication_result_repository.js';
+import type { SupportRequestRepository } from '../src/repositories/support_request_repository.js';
 import type { RealtimeGateway } from '../src/socket/realtime_gateway.js';
 
 const open_servers = new Set<Server>();
@@ -241,6 +242,53 @@ describe('HTTP application', () => {
     expect(mark_realtime_published).toHaveBeenCalledWith(notification);
     expect(publish_notification.mock.invocationCallOrder[0])
       .toBeLessThan(mark_realtime_published.mock.invocationCallOrder[0]!);
+  });
+
+  it('publishes support snapshots from the authenticated internal endpoint', async () => {
+    const store_snapshot = {
+      store_id: 'store_1',
+      unread_count: 1,
+      support_requests: []
+    };
+    const queue_snapshot = {
+      open_count: 7
+    };
+    const get_store_snapshot = vi.fn().mockResolvedValue(store_snapshot);
+    const get_queue_snapshot = vi.fn().mockResolvedValue(queue_snapshot);
+    const publish_support_request_store_snapshot = vi.fn();
+    const publish_support_request_queue_snapshot = vi.fn();
+    const server = await start_app({
+      support_request_repository: {
+        get_store_snapshot,
+        get_queue_snapshot
+      } as unknown as SupportRequestRepository,
+      realtime_gateway: {
+        publish_support_request_store_snapshot,
+        publish_support_request_queue_snapshot
+      } as unknown as RealtimeGateway
+    });
+
+    const response = await fetch(`${server.url}/internal/support-requests/publish`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-internal-token': 'test_internal_token_at_least_32_chars'
+      },
+      body: JSON.stringify({
+        store_id: 'store_1'
+      })
+    });
+
+    expect(response.status).toBe(202);
+    expect(await response.json()).toEqual({
+      ok: true,
+      store_snapshot,
+      queue_snapshot
+    });
+    expect(get_store_snapshot).toHaveBeenCalledWith('store_1');
+    expect(get_queue_snapshot).toHaveBeenCalledOnce();
+    expect(publish_support_request_store_snapshot).toHaveBeenCalledWith(store_snapshot);
+    expect(publish_support_request_queue_snapshot).toHaveBeenCalledWith(queue_snapshot);
   });
 
   it('suppresses realtime emission for an identical notification duplicate', async () => {
@@ -703,6 +751,7 @@ type TestOverrides = {
   db?: Db;
   notification_repository?: NotificationRepository;
   publication_result_repository?: PublicationResultRepository;
+  support_request_repository?: SupportRequestRepository;
   realtime_gateway?: RealtimeGateway;
   redis_health?: () => Promise<{
     enabled: boolean;
@@ -727,6 +776,10 @@ async function start_app(overrides: TestOverrides = {}) {
       mark_published: vi.fn().mockResolvedValue(true),
       release: vi.fn().mockResolvedValue(true)
     } as unknown as PublicationResultRepository,
+    support_request_repository: overrides.support_request_repository ?? {
+      get_store_snapshot: vi.fn(),
+      get_queue_snapshot: vi.fn()
+    } as unknown as SupportRequestRepository,
     realtime_gateway: overrides.realtime_gateway ?? {} as RealtimeGateway,
     redis_health: overrides.redis_health,
     is_shutting_down: overrides.is_shutting_down

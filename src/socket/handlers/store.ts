@@ -42,6 +42,7 @@ import {
   register_store_notification_handlers,
   serialize_notification_page
 } from './store_notifications.js';
+import { register_store_support_request_handlers } from './store_support_requests.js';
 
 type StoreSocketState = {
   ready: boolean;
@@ -163,6 +164,10 @@ async function bootstrap_store_socket(
     identity.permissions,
     'publication_read'
   );
+  const can_read_support_requests = identity.permissions.includes('support_request_read');
+  const can_read_support_request_queue = identity.permissions.includes(
+    'support_request_queue_read'
+  );
 
   if (!socket.recovered) {
     if (can_read_notifications) {
@@ -201,6 +206,14 @@ async function bootstrap_store_socket(
       identity.store_id
     ));
   }
+  if (can_read_support_requests) {
+    await socket.join(deps.realtime_gateway.join_support_request_store_room(
+      identity.store_id
+    ));
+  }
+  if (can_read_support_request_queue) {
+    await socket.join(deps.realtime_gateway.join_support_request_queue_room());
+  }
   if (is_chat_attendant_role(user_role) && can_read_marketplace) {
     await socket.join(deps.realtime_gateway.join_marketplace_store_attendant_room(
       identity.store_id,
@@ -219,6 +232,24 @@ async function bootstrap_store_socket(
 
   if (transition.changed) {
     await deps.realtime_gateway.publish_store_presence(transition.presence);
+  }
+
+  const [support_request_snapshot, support_request_queue_snapshot] = await Promise.all([
+    can_read_support_requests
+      ? deps.support_request_repository.get_store_snapshot(identity.store_id)
+      : Promise.resolve(undefined),
+    can_read_support_request_queue
+      ? deps.support_request_repository.get_queue_snapshot()
+      : Promise.resolve(undefined)
+  ]);
+
+  assert_socket_connected(socket, state);
+
+  if (support_request_snapshot) {
+    socket.emit('support_request:sync', support_request_snapshot);
+  }
+  if (support_request_queue_snapshot) {
+    socket.emit('support_request_queue:sync', support_request_queue_snapshot);
   }
 
   if (!socket.recovered) {
@@ -330,6 +361,7 @@ function install_store_event_handlers(
   const is_ready = () => state.ready;
 
   register_store_notification_handlers(socket, is_ready, deps, tracker);
+  register_store_support_request_handlers(socket, is_ready, deps, tracker);
 
   register_socket_event(socket, tracker, 'chat:send', is_ready, async (payload, ack) => {
     if (!require_permission(

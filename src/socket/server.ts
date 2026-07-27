@@ -8,6 +8,7 @@ import type { EcommerceChatRepository } from '../repositories/ecommerce_chat_rep
 import type { MarketplaceChatRepository } from '../repositories/marketplace_chat_repository.js';
 import type { NotificationRepository } from '../repositories/notification_repository.js';
 import type { PresenceRepository } from '../repositories/presence_repository.js';
+import type { SupportRequestRepository } from '../repositories/support_request_repository.js';
 import { CustomerRateLimiter } from '../services/customer_rate_limiter.js';
 import { PresenceService } from '../services/presence_service.js';
 import { SyncCache } from '../services/sync_cache.js';
@@ -23,6 +24,7 @@ type SocketServerDependencies = {
   marketplace_chat_repository: MarketplaceChatRepository;
   notification_repository: NotificationRepository;
   presence_repository: PresenceRepository;
+  support_request_repository: SupportRequestRepository;
 };
 
 export type SocketRuntime = {
@@ -94,6 +96,7 @@ export async function create_socket_server(
     ecommerce_chat_repository: deps.ecommerce_chat_repository,
     marketplace_chat_repository: deps.marketplace_chat_repository,
     notification_repository: deps.notification_repository,
+    support_request_repository: deps.support_request_repository,
     presence_service,
     customer_rate_limiter,
     sync_cache,

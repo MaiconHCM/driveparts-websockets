@@ -235,6 +235,7 @@ dados como `retryable`, `retry_after_seconds` ou
 - `ecommerce_chat:send`, `ecommerce_chat:read`
 - `marketplace_chat:read`, `marketplace_chat:read_all`
 - `notification:sync`, `notification:read`, `notification:read_all`
+- `support_request:sync`, `support_request_queue:sync`
 - `presence:sync`
 
 `client_message_id` fornece idempotência para envios de chat. A leitura e a
@@ -265,6 +266,7 @@ padrão é `10` operações a cada `60` segundos.
   `ecommerce_chat:read`
 - marketplace: `marketplace_chat:read`, `marketplace_chat:read_all`
 - notificações: `notification:new`, `notification:read`, `notification:read_all`
+- suporte: `support_request:sync`, `support_request_queue:sync`
 - publicação de anúncios: `publication:result`
 - presença: `presence:update`
 

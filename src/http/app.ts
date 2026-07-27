@@ -11,6 +11,7 @@ import {
   internal_chat_message_schema,
   internal_notification_schema,
   internal_publication_result_schema,
+  internal_support_request_publish_schema,
   type InternalNotificationInput,
   type InternalPublicationResultInput
 } from '../contracts/schemas.js';
@@ -25,6 +26,7 @@ import {
   type InventoryItemIntegrationSnapshot,
   type PublicationResultRepository
 } from '../repositories/publication_result_repository.js';
+import type { SupportRequestRepository } from '../repositories/support_request_repository.js';
 import { serialize_chat_message, serialize_notification } from '../serializers/realtime.js';
 import type {
   PublicationResultEvent,
@@ -41,6 +43,7 @@ type AppDependencies = {
   chat_repository: ChatRepository;
   notification_repository: NotificationRepository;
   publication_result_repository: PublicationResultRepository;
+  support_request_repository: SupportRequestRepository;
   realtime_gateway: RealtimeGateway;
   redis_health?: () => Promise<RedisHealth>;
   is_shutting_down?: () => boolean;
@@ -176,6 +179,32 @@ export function create_http_app(deps: AppDependencies) {
           ok: true,
           suppressed,
           notification: serialize_notification(result.notification)
+        });
+      } catch (error) {
+        next(error);
+      }
+    }
+  );
+
+  app.post(
+    '/internal/support-requests/publish',
+    require_internal_token(deps.config),
+    async (request, response, next) => {
+      try {
+        assert_payload_keys_are_snake_case(request.body);
+        const input = internal_support_request_publish_schema.parse(request.body);
+        const [store_snapshot, queue_snapshot] = await Promise.all([
+          deps.support_request_repository.get_store_snapshot(input.store_id),
+          deps.support_request_repository.get_queue_snapshot()
+        ]);
+
+        deps.realtime_gateway.publish_support_request_store_snapshot(store_snapshot);
+        deps.realtime_gateway.publish_support_request_queue_snapshot(queue_snapshot);
+
+        response.status(202).json({
+          ok: true,
+          store_snapshot,
+          queue_snapshot
         });
       } catch (error) {
         next(error);

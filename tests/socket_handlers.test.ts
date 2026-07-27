@@ -16,6 +16,7 @@ import type {
   NotificationDocument,
   NotificationRepository
 } from '../src/repositories/notification_repository.js';
+import type { SupportRequestRepository } from '../src/repositories/support_request_repository.js';
 import type {
   CustomerRateLimiter,
   RateLimitResult
@@ -162,6 +163,78 @@ describe('Socket.IO handlers', () => {
     ));
 
     expect(socket.joined_rooms).toContain('publication_store:store_1');
+    await tracker.drain();
+  });
+
+  it('delivers support snapshots only to sockets with explicit support permissions', async () => {
+    const test_context = create_test_context({
+      socket_enforce_permissions: true
+    });
+    test_context.support_request_repository.get_store_snapshot.mockResolvedValue({
+      store_id: 'store_1',
+      unread_count: 1,
+      support_requests: []
+    });
+    test_context.support_request_repository.get_queue_snapshot.mockResolvedValue({
+      open_count: 4
+    });
+    const socket = create_store_socket({
+      permissions: [
+        'support_request_read',
+        'support_request_queue_read'
+      ]
+    });
+    const tracker = new SocketWorkTracker(8, test_context.deps.logger);
+
+    register_store_socket(socket.as_authenticated(), test_context.deps, tracker);
+    await wait_for(() => socket.outbound.some(
+      (item) => item.event_name === 'connection:ready'
+    ));
+
+    expect(socket.joined_rooms).toEqual(expect.arrayContaining([
+      'support_request_store:store_1',
+      'support_request_queue'
+    ]));
+    expect(socket.outbound).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        event_name: 'support_request:sync',
+        payload: expect.objectContaining({
+          store_id: 'store_1',
+          unread_count: 1
+        })
+      }),
+      expect.objectContaining({
+        event_name: 'support_request_queue:sync',
+        payload: {
+          open_count: 4
+        }
+      })
+    ]));
+    await tracker.drain();
+  });
+
+  it('rejects support queue sync without its explicit JWT permission', async () => {
+    const test_context = create_test_context();
+    const socket = create_store_socket();
+    const tracker = new SocketWorkTracker(8, test_context.deps.logger);
+
+    register_store_socket(socket.as_authenticated(), test_context.deps, tracker);
+    await wait_for(() => socket.outbound.some(
+      (item) => item.event_name === 'connection:ready'
+    ));
+
+    const ack = vi.fn();
+    socket.receive('support_request_queue:sync', {}, ack);
+    await wait_for(() => ack.mock.calls.length === 1);
+
+    expect(ack).toHaveBeenCalledWith({
+      ok: false,
+      error: {
+        code: 'forbidden',
+        message: 'support_request_queue_read_not_allowed'
+      }
+    });
+    expect(test_context.support_request_repository.get_queue_snapshot).not.toHaveBeenCalled();
     await tracker.drain();
   });
 
@@ -823,6 +896,16 @@ function create_test_context(config_overrides: Partial<AppConfig> = {}) {
     mark_read: vi.fn(),
     mark_all_read: vi.fn()
   };
+  const support_request_repository = {
+    get_store_snapshot: vi.fn(async (store_id: string) => ({
+      store_id,
+      unread_count: 0,
+      support_requests: []
+    })),
+    get_queue_snapshot: vi.fn(async () => ({
+      open_count: 0
+    }))
+  };
   const presence_service = {
     register: vi.fn(async (store_id: string): Promise<PresenceTransition> => ({
       changed: true,
@@ -879,6 +962,10 @@ function create_test_context(config_overrides: Partial<AppConfig> = {}) {
     join_publication_store_room: vi.fn(
       (store_id: string) => `publication_store:${store_id}`
     ),
+    join_support_request_store_room: vi.fn(
+      (store_id: string) => `support_request_store:${store_id}`
+    ),
+    join_support_request_queue_room: vi.fn(() => 'support_request_queue'),
     join_store_chat_attendant_room: vi.fn(
       (store_id: string, role: string) => `chat_attendant:${store_id}:${role}`
     ),
@@ -913,6 +1000,7 @@ function create_test_context(config_overrides: Partial<AppConfig> = {}) {
     ecommerce_chat_repository: ecommerce_chat_repository as unknown as EcommerceChatRepository,
     marketplace_chat_repository: marketplace_chat_repository as unknown as MarketplaceChatRepository,
     notification_repository: notification_repository as unknown as NotificationRepository,
+    support_request_repository: support_request_repository as unknown as SupportRequestRepository,
     presence_service: presence_service as unknown as PresenceService,
     customer_rate_limiter: customer_rate_limiter as unknown as CustomerRateLimiter,
     sync_cache: sync_cache as unknown as SyncCache,
@@ -926,6 +1014,7 @@ function create_test_context(config_overrides: Partial<AppConfig> = {}) {
     ecommerce_chat_repository,
     marketplace_chat_repository,
     notification_repository,
+    support_request_repository,
     presence_service,
     customer_rate_limiter,
     sync_cache,

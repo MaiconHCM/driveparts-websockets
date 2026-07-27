@@ -7,6 +7,7 @@ import type { ChatRepository } from '../../repositories/chat_repository.js';
 import type { EcommerceChatRepository } from '../../repositories/ecommerce_chat_repository.js';
 import type { MarketplaceChatRepository } from '../../repositories/marketplace_chat_repository.js';
 import type { NotificationRepository } from '../../repositories/notification_repository.js';
+import type { SupportRequestRepository } from '../../repositories/support_request_repository.js';
 import type { CustomerRateLimiter } from '../../services/customer_rate_limiter.js';
 import type { PresenceService } from '../../services/presence_service.js';
 import type { SyncCache } from '../../services/sync_cache.js';
@@ -23,6 +24,7 @@ export type HandlerDependencies = {
   ecommerce_chat_repository: EcommerceChatRepository;
   marketplace_chat_repository: MarketplaceChatRepository;
   notification_repository: NotificationRepository;
+  support_request_repository: SupportRequestRepository;
   presence_service: PresenceService;
   customer_rate_limiter: CustomerRateLimiter;
   sync_cache: SyncCache;

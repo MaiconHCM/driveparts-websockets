@@ -254,6 +254,10 @@ export const notification_read_all_schema = z.object({}).strict();
 
 export type NotificationReadAllInput = z.infer<typeof notification_read_all_schema>;
 
+export const support_request_sync_schema = z.object({}).strict();
+
+export type SupportRequestSyncInput = z.infer<typeof support_request_sync_schema>;
+
 export const presence_sync_schema = z.object({
   store_ids: z.array(id_value).min(1).max(100)
 }).strict();
@@ -294,6 +298,14 @@ export const internal_notification_schema = z.object({
 }).strict();
 
 export type InternalNotificationInput = z.infer<typeof internal_notification_schema>;
+
+export const internal_support_request_publish_schema = z.object({
+  store_id: id_value
+}).strict();
+
+export type InternalSupportRequestPublishInput = z.infer<
+  typeof internal_support_request_publish_schema
+>;
 
 export const internal_chat_message_schema = z.object({
   message_id: object_id_value

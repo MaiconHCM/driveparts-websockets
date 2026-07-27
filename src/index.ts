@@ -9,6 +9,7 @@ import { MarketplaceChatRepository } from './repositories/marketplace_chat_repos
 import { NotificationRepository } from './repositories/notification_repository.js';
 import { PresenceRepository } from './repositories/presence_repository.js';
 import { PublicationResultRepository } from './repositories/publication_result_repository.js';
+import { SupportRequestRepository } from './repositories/support_request_repository.js';
 import { create_socket_server } from './socket/server.js';
 
 async function main(): Promise<void> {
@@ -37,6 +38,7 @@ async function main(): Promise<void> {
     const notification_repository = new NotificationRepository(mongo.db);
     const presence_repository = new PresenceRepository(mongo.db);
     const publication_result_repository = new PublicationResultRepository(mongo.db);
+    const support_request_repository = new SupportRequestRepository(mongo.db);
     socket_runtime = await create_socket_server(server, {
       config,
       logger,
@@ -44,7 +46,8 @@ async function main(): Promise<void> {
       ecommerce_chat_repository,
       marketplace_chat_repository,
       notification_repository,
-      presence_repository
+      presence_repository,
+      support_request_repository
     });
     const app = create_http_app({
       config,
@@ -53,6 +56,7 @@ async function main(): Promise<void> {
       chat_repository,
       notification_repository,
       publication_result_repository,
+      support_request_repository,
       realtime_gateway: socket_runtime.realtime_gateway,
       redis_health: socket_runtime.redis_health,
       is_shutting_down: () => shutting_down

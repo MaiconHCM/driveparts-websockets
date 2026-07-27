@@ -17,6 +17,10 @@ import type { NotificationDocument } from '../repositories/notification_reposito
 import type {
   InventoryItemIntegrationSnapshot
 } from '../repositories/publication_result_repository.js';
+import type {
+  SupportRequestQueueSnapshot,
+  SupportRequestStoreSnapshot
+} from '../repositories/support_request_repository.js';
 import type { StorePresencePayload } from '../services/presence_service.js';
 import type { SyncCache } from '../services/sync_cache.js';
 
@@ -93,6 +97,14 @@ export class RealtimeGateway {
 
   join_publication_store_room(store_id: string): string {
     return publication_store_room(store_id);
+  }
+
+  join_support_request_store_room(store_id: string): string {
+    return support_request_store_room(store_id);
+  }
+
+  join_support_request_queue_room(): string {
+    return support_request_queue_room();
   }
 
   join_store_chat_attendant_room(store_id: string, user_role: ChatAttendantRole): string {
@@ -286,6 +298,18 @@ export class RealtimeGateway {
       .to(publication_store_room(result.store_id))
       .emit('publication:result', result);
   }
+
+  publish_support_request_store_snapshot(snapshot: SupportRequestStoreSnapshot): void {
+    this.io
+      .to(support_request_store_room(snapshot.store_id))
+      .emit('support_request:sync', snapshot);
+  }
+
+  publish_support_request_queue_snapshot(snapshot: SupportRequestQueueSnapshot): void {
+    this.io
+      .to(support_request_queue_room())
+      .emit('support_request_queue:sync', snapshot);
+  }
 }
 
 function store_room(store_id: string): string {
@@ -302,6 +326,14 @@ function notification_user_room(store_id: string, user_id: string): string {
 
 function publication_store_room(store_id: string): string {
   return build_room('publication_store', store_id);
+}
+
+function support_request_store_room(store_id: string): string {
+  return build_room('support_request_store', store_id);
+}
+
+function support_request_queue_room(): string {
+  return 'support_request_queue';
 }
 
 function store_chat_attendant_room(store_id: string, user_role: ChatAttendantRole): string {
